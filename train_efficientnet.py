@@ -10,8 +10,10 @@
 ║    • LR Finder with saved plots                                        ║
 ║    • Compute dataset mean/std (no ImageNet defaults if you want)       ║
 ║    • WeightedRandomSampler + ENS class weights                         ║
+║    • Focal Loss (focuses on hard/minority samples)                     ║
+║    • Mixup + CutMix (regularization for imbalanced data)               ║
 ║    • CosineAnnealingWarmRestarts with LR Finder best LR                ║
-║    • Mixed precision + Gradient clipping                               ║
+║    • Mixed precision + Gradient clipping + Gradient accumulation       ║
 ║    • WANDB monitoring                                                  ║
 ║    • All plots saved to EfficientNetV2S/images/                        ║
 ║    • Model export: PTH + ONNX                                         ║
@@ -51,6 +53,7 @@ from sklearn.metrics import (
 )
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from torchvision import datasets, models, transforms
+from torchvision.transforms import v2 as T_v2
 from tqdm import tqdm
 
 try:
@@ -426,6 +429,94 @@ def create_dataloaders(data_dir, image_size, batch_size, mean, std, num_workers)
 #                          MODEL
 # ======================================================================
 
+# ======================================================================
+#                        FOCAL LOSS
+# ======================================================================
+
+class FocalLoss(nn.Module):
+    """
+    Focal Loss — focuses training on hard, misclassified samples.
+    Excellent for severely imbalanced datasets.
+    FL(p_t) = -alpha_t * (1 - p_t)^gamma * log(p_t)
+    """
+    def __init__(self, weight=None, gamma=2.0, label_smoothing=0.1, reduction="mean"):
+        super().__init__()
+        self.gamma = gamma
+        self.label_smoothing = label_smoothing
+        self.reduction = reduction
+        self.register_buffer("weight", weight)
+        self.ce = nn.CrossEntropyLoss(
+            weight=weight, reduction="none", label_smoothing=label_smoothing,
+        )
+
+    def forward(self, inputs, targets):
+        ce_loss = self.ce(inputs, targets)
+        pt = torch.exp(-ce_loss)  # p_t = probability of correct class
+        focal_loss = ((1 - pt) ** self.gamma) * ce_loss
+
+        if self.weight is not None:
+            # Weight already applied by CE, just apply focal modulation
+            pass
+
+        if self.reduction == "mean":
+            return focal_loss.mean()
+        elif self.reduction == "sum":
+            return focal_loss.sum()
+        return focal_loss
+
+
+# ======================================================================
+#                        MIXUP / CUTMIX
+# ======================================================================
+
+def mixup_data(x, y, alpha=0.4):
+    """Mixup: blend two random samples."""
+    if alpha > 0:
+        lam = np.random.beta(alpha, alpha)
+    else:
+        lam = 1.0
+    batch_size = x.size(0)
+    index = torch.randperm(batch_size, device=x.device)
+    mixed_x = lam * x + (1 - lam) * x[index]
+    y_a, y_b = y, y[index]
+    return mixed_x, y_a, y_b, lam
+
+
+def cutmix_data(x, y, alpha=1.0):
+    """CutMix: cut a patch from one image and paste to another."""
+    if alpha > 0:
+        lam = np.random.beta(alpha, alpha)
+    else:
+        lam = 1.0
+    batch_size = x.size(0)
+    index = torch.randperm(batch_size, device=x.device)
+
+    _, _, H, W = x.shape
+    cut_ratio = np.sqrt(1 - lam)
+    cut_h = int(H * cut_ratio)
+    cut_w = int(W * cut_ratio)
+    cy = np.random.randint(H)
+    cx = np.random.randint(W)
+    y1 = np.clip(cy - cut_h // 2, 0, H)
+    y2 = np.clip(cy + cut_h // 2, 0, H)
+    x1 = np.clip(cx - cut_w // 2, 0, W)
+    x2 = np.clip(cx + cut_w // 2, 0, W)
+
+    x[:, :, y1:y2, x1:x2] = x[index, :, y1:y2, x1:x2]
+    lam = 1 - (y2 - y1) * (x2 - x1) / (H * W)  # Adjust lambda by actual area
+    y_a, y_b = y, y[index]
+    return x, y_a, y_b, lam
+
+
+def mixup_criterion(criterion, pred, y_a, y_b, lam):
+    """Compute mixed loss."""
+    return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
+
+
+# ======================================================================
+#                          MODEL
+# ======================================================================
+
 def build_model(num_classes, device):
     """EfficientNet-V2-S with a stronger custom head."""
     print("\n  Loading EfficientNet-V2-S (ImageNet pretrained)...")
@@ -435,15 +526,19 @@ def build_model(num_classes, device):
     for param in model.features.parameters():
         param.requires_grad = False
 
-    # Custom classification head
+    # Stronger classification head (wider layers to handle 116 classes)
     in_features = model.classifier[1].in_features  # 1280
     model.classifier = nn.Sequential(
-        nn.Dropout(p=0.4),
-        nn.Linear(in_features, 512),
-        nn.BatchNorm1d(512),
-        nn.SiLU(inplace=True),
         nn.Dropout(p=0.3),
-        nn.Linear(512, num_classes),
+        nn.Linear(in_features, 768),
+        nn.BatchNorm1d(768),
+        nn.SiLU(inplace=True),
+        nn.Dropout(p=0.2),
+        nn.Linear(768, 384),
+        nn.BatchNorm1d(384),
+        nn.SiLU(inplace=True),
+        nn.Dropout(p=0.15),
+        nn.Linear(384, num_classes),
     )
 
     model = model.to(device)
@@ -588,36 +683,56 @@ def run_lr_finder(model, train_loader, criterion, device, save_path,
 #                     TRAINING ENGINE
 # ======================================================================
 
-def train_one_epoch(model, loader, criterion, optimizer, scheduler, scaler, device, grad_clip):
-    """Train for one epoch."""
+def train_one_epoch(model, loader, criterion, optimizer, scheduler, scaler, device,
+                    grad_clip, accum_steps=1, use_mixup=True):
+    """
+    Train for one epoch with:
+    - Gradient accumulation (effective batch = batch_size * accum_steps)
+    - Mixup / CutMix augmentation (50/50 chance, 20% skip)
+    """
     model.train()
     running_loss = 0.0
     running_corrects = 0
     total = 0
+    optimizer.zero_grad(set_to_none=True)
 
-    for inputs, labels in tqdm(loader, desc="  Train", leave=False):
+    for step, (inputs, labels) in enumerate(tqdm(loader, desc="  Train", leave=False)):
         inputs = inputs.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
 
-        optimizer.zero_grad(set_to_none=True)
+        # --- Mixup / CutMix (applied 80% of the time) ---
+        apply_mix = use_mixup and (random.random() < 0.8)
+        if apply_mix:
+            if random.random() < 0.5:
+                inputs, targets_a, targets_b, lam = mixup_data(inputs, labels, alpha=0.4)
+            else:
+                inputs, targets_a, targets_b, lam = cutmix_data(inputs, labels, alpha=1.0)
 
         with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
             outputs = model(inputs)
-            loss = criterion(outputs, labels)
+            if apply_mix:
+                loss = mixup_criterion(criterion, outputs, targets_a, targets_b, lam)
+            else:
+                loss = criterion(outputs, labels)
+            loss = loss / accum_steps  # Scale for accumulation
 
         scaler.scale(loss).backward()
-        scaler.unscale_(optimizer)
-        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-        scaler.step(optimizer)
-        scaler.update()
 
-        # Step per-batch schedulers
-        if scheduler is not None and not isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
-            scheduler.step()
+        # Accumulate gradients, step every `accum_steps` batches
+        if (step + 1) % accum_steps == 0 or (step + 1) == len(loader):
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.zero_grad(set_to_none=True)
+
+            # Step per-batch schedulers
+            if scheduler is not None and not isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
+                scheduler.step()
 
         _, preds = torch.max(outputs, 1)
         bs = inputs.size(0)
-        running_loss += loss.item() * bs
+        running_loss += loss.item() * accum_steps * bs  # Undo scaling for logging
         running_corrects += (preds == labels).sum().item()
         total += bs
 
@@ -651,7 +766,7 @@ def validate(model, loader, criterion, device):
 
 def train_stage(model, dataloaders, dataset_sizes, criterion, optimizer, scheduler,
                 device, dirs, stage_name, num_epochs, patience, grad_clip,
-                wandb_run=None):
+                accum_steps=1, use_mixup=True, wandb_run=None):
     """
     Full training loop for one stage (feature extraction OR fine-tuning).
     Saves checkpoints, CSV logs, and returns (model, history, best_acc).
@@ -677,7 +792,8 @@ def train_stage(model, dataloaders, dataset_sizes, criterion, optimizer, schedul
         t0 = time.time()
 
         train_loss, train_acc = train_one_epoch(
-            model, dataloaders["train"], criterion, optimizer, scheduler, scaler, device, grad_clip
+            model, dataloaders["train"], criterion, optimizer, scheduler, scaler, device,
+            grad_clip, accum_steps=accum_steps, use_mixup=use_mixup,
         )
         val_loss, val_acc = validate(model, dataloaders["val"], criterion, device)
 
@@ -697,11 +813,15 @@ def train_stage(model, dataloaders, dataset_sizes, criterion, optimizer, schedul
         history["val_acc"].append(val_acc)
         history["lr"].append(current_lr)
 
+        # GPU memory usage
+        gpu_mem = torch.cuda.memory_allocated() / 1e9 if torch.cuda.is_available() else 0
+        gpu_max = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0
+
         # Print
         print(f"  Ep {epoch+1:02d}/{num_epochs} │ "
               f"TrLoss {train_loss:.4f}  TrAcc {train_acc:.4f} │ "
               f"VaLoss {val_loss:.4f}  VaAcc {val_acc:.4f} │ "
-              f"LR {current_lr:.2e} │ {dt:.0f}s")
+              f"LR {current_lr:.2e} │ GPU {gpu_mem:.1f}/{gpu_max:.1f}GB │ {dt:.0f}s")
 
         # W&B
         if wandb_run and WANDB_AVAILABLE:
@@ -977,17 +1097,21 @@ def main():
     dataset_mean, dataset_std = compute_dataset_stats(args.data_dir)
 
     # ── Hardware-aware config (nothing hardcoded) ──
+    # RTX 4070 8GB: ~6GB usable VRAM. Use larger batches + gradient accumulation.
     if args.colab:
         s1_batch, s2_batch, num_workers = 64, 32, 2
+        accum_steps_s1, accum_steps_s2 = 2, 4    # Effective: 192, 192
     else:
-        s1_batch, s2_batch, num_workers = 48, 24, 6
+        s1_batch, s2_batch, num_workers = 64, 32, 6
+        accum_steps_s1, accum_steps_s2 = 2, 4    # Effective: 192, 192
 
     s1_img_size = 224
     s2_img_size = 300
-    s1_epochs = 1 if args.dry_run else 5
-    s2_epochs = 1 if args.dry_run else 35
-    patience = 999 if args.dry_run else 7
+    s1_epochs = 1 if args.dry_run else 10   # More epochs for solid feature extraction
+    s2_epochs = 1 if args.dry_run else 40   # Long fine-tuning with early stopping
+    patience = 999 if args.dry_run else 10  # Patient early stopping
     ens_beta = 0.999
+    focal_gamma = 2.0                       # Focal loss gamma
     label_smoothing = 0.1
     weight_decay = 0.01
     grad_clip = 1.0
@@ -995,8 +1119,11 @@ def main():
     print(f"\n  ⚙️  CONFIG (auto-configured)")
     print(f"  {'─' * 40}")
     print(f"  NUM_CLASSES:    {num_classes} (auto-detected)")
-    print(f"  Stage 1:        {s1_epochs} epochs, {s1_img_size}px, batch {s1_batch}")
-    print(f"  Stage 2:        {s2_epochs} epochs, {s2_img_size}px, batch {s2_batch}")
+    print(f"  Stage 1:        {s1_epochs} ep, {s1_img_size}px, batch {s1_batch}×{accum_steps_s1} = {s1_batch*accum_steps_s1} effective")
+    print(f"  Stage 2:        {s2_epochs} ep, {s2_img_size}px, batch {s2_batch}×{accum_steps_s2} = {s2_batch*accum_steps_s2} effective")
+    print(f"  Loss:           FocalLoss (γ={focal_gamma}) + ENS weights + label_smoothing={label_smoothing}")
+    print(f"  Augmentation:   Mixup(α=0.4) + CutMix(α=1.0) applied 80% of batches")
+    print(f"  Patience:       {patience} epochs")
     print(f"  Workers:        {num_workers}")
     print(f"  Dataset mean:   {dataset_mean}")
     print(f"  Dataset std:    {dataset_std}")
@@ -1023,8 +1150,8 @@ def main():
     model = build_model(num_classes, device)
     model = try_compile(model)
 
-    # Loss
-    criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=label_smoothing)
+    # Loss — Focal Loss (better than CE for imbalanced data)
+    criterion = FocalLoss(weight=class_weights, gamma=focal_gamma, label_smoothing=label_smoothing)
 
     # ── LR Finder for Stage 1 ──
     suggested_lr_s1 = run_lr_finder(
@@ -1066,10 +1193,11 @@ def main():
         except Exception as e:
             print(f"  W&B init failed: {e}")
 
-    # Train Stage 1
+    # Train Stage 1 (Mixup/CutMix ON for regularization)
     model, hist_s1, best_acc_s1 = train_stage(
         model, dataloaders, sizes, criterion, optimizer, scheduler,
-        device, dirs, "Stage1_FeatureExtraction", s1_epochs, patience, grad_clip, wandb_run,
+        device, dirs, "Stage1_FeatureExtraction", s1_epochs, patience, grad_clip,
+        accum_steps=accum_steps_s1, use_mixup=True, wandb_run=wandb_run,
     )
     print(f"\n  ✅ Stage 1 done — Best Val Acc: {best_acc_s1:.4f}")
 
@@ -1092,9 +1220,9 @@ def main():
     # Unfreeze
     unfreeze_backbone(model)
 
-    # New class weights
+    # New class weights + Focal Loss
     class_weights = compute_ens_class_weights(train_dataset, ens_beta, num_classes, device)
-    criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=label_smoothing)
+    criterion = FocalLoss(weight=class_weights, gamma=focal_gamma, label_smoothing=label_smoothing)
 
     # ── LR Finder for Stage 2 (discriminative LR) ──
     suggested_lr_s2 = run_lr_finder(
@@ -1117,10 +1245,11 @@ def main():
     if wandb_run and WANDB_AVAILABLE:
         wandb.config.update({"s2_lr_head": lr_head, "s2_lr_backbone": lr_backbone})
 
-    # Train Stage 2
+    # Train Stage 2 (Mixup/CutMix ON for regularization)
     model, hist_s2, best_acc_s2 = train_stage(
         model, dataloaders, sizes, criterion, optimizer, scheduler,
-        device, dirs, "Stage2_FineTuning", s2_epochs, patience, grad_clip, wandb_run,
+        device, dirs, "Stage2_FineTuning", s2_epochs, patience, grad_clip,
+        accum_steps=accum_steps_s2, use_mixup=True, wandb_run=wandb_run,
     )
     print(f"\n  ✅ Stage 2 done — Best Val Acc: {best_acc_s2:.4f}")
 
