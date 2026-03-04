@@ -29,6 +29,7 @@
 import argparse
 import copy
 import json
+import logging
 import os
 import platform
 import random
@@ -131,6 +132,34 @@ def seed_everything(seed=42):
 
 
 # ======================================================================
+#                      LOGGING (tee to file)
+# ======================================================================
+
+class TeeLogger:
+    """
+    Duplicates stdout to both console and a log file.
+    All print() output is captured automatically.
+    """
+    def __init__(self, log_path):
+        self.terminal = sys.stdout
+        self.log_file = open(log_path, "w", encoding="utf-8")
+        print(f"  📝 All output logged to: {log_path}")
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log_file.write(message)
+        self.log_file.flush()
+
+    def flush(self):
+        self.terminal.flush()
+        self.log_file.flush()
+
+    def close(self):
+        self.log_file.close()
+        sys.stdout = self.terminal
+
+
+# ======================================================================
 #                    FOLDER STRUCTURE
 # ======================================================================
 
@@ -181,7 +210,7 @@ def analyze_dataset(data_dir):
 
     class_names = sorted([
         d for d in os.listdir(train_dir)
-        if os.path.isdir(os.path.join(train_dir, d))
+        if os.path.isdir(os.path.join(train_dir, d)) and not d.startswith('.')
     ])
     num_classes = len(class_names)
 
@@ -219,6 +248,15 @@ def analyze_dataset(data_dir):
     print(f"    Mean:   {np.mean(counts):>7.0f}")
     print(f"    Median: {np.median(counts):>7.0f}")
     print(f"    Ratio (max/min): {max(counts)/max(min(counts),1):.0f}x imbalance")
+
+    # Show bottom 10 and top 10 classes
+    sorted_pairs = sorted(train_counts.items(), key=lambda x: x[1])
+    print(f"\n  ⚠️  Bottom 10 classes (most at risk):")
+    for name, cnt in sorted_pairs[:10]:
+        print(f"    {cnt:>5} images — {name}")
+    print(f"\n  ✅ Top 10 classes:")
+    for name, cnt in sorted_pairs[-10:]:
+        print(f"    {cnt:>5} images — {name}")
 
     return class_names, num_classes, train_counts
 
@@ -567,6 +605,61 @@ def get_param_groups(model, lr_head, lr_backbone):
     ]
 
 
+def get_param_groups_no_decay(model, lr, weight_decay):
+    """
+    Create param groups that EXCLUDE BatchNorm and bias from weight decay.
+    Applying weight decay to BN/bias hurts convergence (known best practice).
+    """
+    decay_params = []
+    no_decay_params = []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        # Exclude BN weights, BN biases, and all biases from weight decay
+        if "bn" in name or "batch" in name.lower() or "bias" in name:
+            no_decay_params.append(param)
+        else:
+            decay_params.append(param)
+
+    print(f"  Weight decay groups: {len(decay_params)} with decay, {len(no_decay_params)} without")
+    return [
+        {"params": decay_params, "lr": lr, "weight_decay": weight_decay},
+        {"params": no_decay_params, "lr": lr, "weight_decay": 0.0},
+    ]
+
+
+def get_param_groups_discriminative_no_decay(model, lr_head, lr_backbone, weight_decay):
+    """
+    Discriminative LR + exclude BN/bias from weight decay.
+    4 groups: backbone+decay, backbone+no_decay, head+decay, head+no_decay.
+    """
+    backbone_decay, backbone_no_decay = [], []
+    head_decay, head_no_decay = [], []
+
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        is_no_decay = ("bn" in name or "batch" in name.lower() or "bias" in name)
+        if name.startswith("features") or name.startswith("_orig_mod.features"):
+            if is_no_decay:
+                backbone_no_decay.append(param)
+            else:
+                backbone_decay.append(param)
+        else:
+            if is_no_decay:
+                head_no_decay.append(param)
+            else:
+                head_decay.append(param)
+
+    print(f"  Param groups: backbone({len(backbone_decay)}+{len(backbone_no_decay)}), head({len(head_decay)}+{len(head_no_decay)})")
+    return [
+        {"params": backbone_decay, "lr": lr_backbone, "weight_decay": weight_decay},
+        {"params": backbone_no_decay, "lr": lr_backbone, "weight_decay": 0.0},
+        {"params": head_decay, "lr": lr_head, "weight_decay": weight_decay},
+        {"params": head_no_decay, "lr": lr_head, "weight_decay": 0.0},
+    ]
+
+
 def try_compile(model):
     """torch.compile on Linux/Mac for speed."""
     if int(torch.__version__.split(".")[0]) >= 2 and platform.system() != "Windows":
@@ -684,11 +777,13 @@ def run_lr_finder(model, train_loader, criterion, device, save_path,
 # ======================================================================
 
 def train_one_epoch(model, loader, criterion, optimizer, scheduler, scaler, device,
-                    grad_clip, accum_steps=1, use_mixup=True):
+                    grad_clip, accum_steps=1, use_mixup=True, mixup_prob=0.5,
+                    step_scheduler_per_batch=True):
     """
     Train for one epoch with:
     - Gradient accumulation (effective batch = batch_size * accum_steps)
-    - Mixup / CutMix augmentation (50/50 chance, 20% skip)
+    - Mixup / CutMix augmentation
+    - Per-batch OR per-epoch scheduler stepping
     """
     model.train()
     running_loss = 0.0
@@ -700,8 +795,8 @@ def train_one_epoch(model, loader, criterion, optimizer, scheduler, scaler, devi
         inputs = inputs.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
 
-        # --- Mixup / CutMix (applied 80% of the time) ---
-        apply_mix = use_mixup and (random.random() < 0.8)
+        # --- Mixup / CutMix ---
+        apply_mix = use_mixup and (random.random() < mixup_prob)
         if apply_mix:
             if random.random() < 0.5:
                 inputs, targets_a, targets_b, lam = mixup_data(inputs, labels, alpha=0.4)
@@ -726,8 +821,9 @@ def train_one_epoch(model, loader, criterion, optimizer, scheduler, scaler, devi
             scaler.update()
             optimizer.zero_grad(set_to_none=True)
 
-            # Step per-batch schedulers
-            if scheduler is not None and not isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
+            # Step per-batch schedulers (e.g. CosineAnnealingWarmRestarts)
+            if step_scheduler_per_batch and scheduler is not None \
+                    and not isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
                 scheduler.step()
 
         _, preds = torch.max(outputs, 1)
@@ -766,10 +862,15 @@ def validate(model, loader, criterion, device):
 
 def train_stage(model, dataloaders, dataset_sizes, criterion, optimizer, scheduler,
                 device, dirs, stage_name, num_epochs, patience, grad_clip,
-                accum_steps=1, use_mixup=True, wandb_run=None):
+                accum_steps=1, use_mixup=True, mixup_prob=0.5,
+                step_scheduler_per_batch=True, wandb_run=None):
     """
     Full training loop for one stage (feature extraction OR fine-tuning).
     Saves checkpoints, CSV logs, and returns (model, history, best_acc).
+
+    step_scheduler_per_batch:
+        True  → scheduler.step() each optimizer step (use with CosineAnnealingWarmRestarts)
+        False → scheduler.step() once per epoch (use with CosineAnnealingLR, ReduceLROnPlateau)
     """
     scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
     best_acc = 0.0
@@ -786,6 +887,8 @@ def train_stage(model, dataloaders, dataset_sizes, criterion, optimizer, schedul
 
     print(f"\n{'═' * 60}")
     print(f"  🏋️ {stage_name}: {num_epochs} epochs (patience={patience})")
+    print(f"    Scheduler: {'per-batch' if step_scheduler_per_batch else 'per-epoch'}")
+    print(f"    Mixup/CutMix: {'ON' if use_mixup else 'OFF'} (prob={mixup_prob})")
     print(f"{'═' * 60}")
 
     for epoch in range(num_epochs):
@@ -793,16 +896,19 @@ def train_stage(model, dataloaders, dataset_sizes, criterion, optimizer, schedul
 
         train_loss, train_acc = train_one_epoch(
             model, dataloaders["train"], criterion, optimizer, scheduler, scaler, device,
-            grad_clip, accum_steps=accum_steps, use_mixup=use_mixup,
+            grad_clip, accum_steps=accum_steps, use_mixup=use_mixup, mixup_prob=mixup_prob,
+            step_scheduler_per_batch=step_scheduler_per_batch,
         )
         val_loss, val_acc = validate(model, dataloaders["val"], criterion, device)
 
         # Get current LR (from head param group if multiple)
         current_lr = optimizer.param_groups[-1]["lr"]
 
-        # ReduceLROnPlateau steps on val loss
+        # Step per-epoch schedulers (ReduceLROnPlateau or CosineAnnealingLR when not per-batch)
         if isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
             scheduler.step(val_loss)
+        elif not step_scheduler_per_batch and scheduler is not None:
+            scheduler.step()
 
         dt = time.time() - t0
 
@@ -817,11 +923,15 @@ def train_stage(model, dataloaders, dataset_sizes, criterion, optimizer, schedul
         gpu_mem = torch.cuda.memory_allocated() / 1e9 if torch.cuda.is_available() else 0
         gpu_max = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0
 
+        # Overfitting detection
+        overfit_gap = train_acc - val_acc
+        overfit_flag = " ⚠️OVF" if overfit_gap > 0.10 else ""
+
         # Print
         print(f"  Ep {epoch+1:02d}/{num_epochs} │ "
               f"TrLoss {train_loss:.4f}  TrAcc {train_acc:.4f} │ "
               f"VaLoss {val_loss:.4f}  VaAcc {val_acc:.4f} │ "
-              f"LR {current_lr:.2e} │ GPU {gpu_mem:.1f}/{gpu_max:.1f}GB │ {dt:.0f}s")
+              f"LR {current_lr:.2e} │ GPU {gpu_mem:.1f}/{gpu_max:.1f}GB │ {dt:.0f}s{overfit_flag}")
 
         # W&B
         if wandb_run and WANDB_AVAILABLE:
@@ -1087,6 +1197,10 @@ def main():
     # ── Output folders ──
     dirs = create_output_dirs("EfficientNetV2S")
 
+    # ── Tee logging: save all console output ──
+    tee = TeeLogger(dirs["logs"] / "full_training_log.txt")
+    sys.stdout = tee
+
     # ── Analyze dataset (auto-detect classes) ──
     class_names, num_classes, train_counts = analyze_dataset(args.data_dir)
 
@@ -1097,13 +1211,13 @@ def main():
     dataset_mean, dataset_std = compute_dataset_stats(args.data_dir)
 
     # ── Hardware-aware config (nothing hardcoded) ──
-    # RTX 4070 8GB: ~6GB usable VRAM. Use larger batches + gradient accumulation.
+    # Target: 16GB VRAM (Colab T4 or local 16GB GPU).
     if args.colab:
-        s1_batch, s2_batch, num_workers = 64, 32, 2
-        accum_steps_s1, accum_steps_s2 = 2, 4    # Effective: 192, 192
+        s1_batch, s2_batch, num_workers = 96, 64, 2
+        accum_steps_s1, accum_steps_s2 = 1, 2    # Effective: 256, 256
     else:
-        s1_batch, s2_batch, num_workers = 64, 32, 6
-        accum_steps_s1, accum_steps_s2 = 2, 4    # Effective: 192, 192
+        s1_batch, s2_batch, num_workers = 96, 64, 6
+        accum_steps_s1, accum_steps_s2 = 1, 2    # Effective: 256, 256
 
     s1_img_size = 224
     s2_img_size = 300
@@ -1122,11 +1236,14 @@ def main():
     print(f"  Stage 1:        {s1_epochs} ep, {s1_img_size}px, batch {s1_batch}×{accum_steps_s1} = {s1_batch*accum_steps_s1} effective")
     print(f"  Stage 2:        {s2_epochs} ep, {s2_img_size}px, batch {s2_batch}×{accum_steps_s2} = {s2_batch*accum_steps_s2} effective")
     print(f"  Loss:           FocalLoss (γ={focal_gamma}) + ENS weights + label_smoothing={label_smoothing}")
-    print(f"  Augmentation:   Mixup(α=0.4) + CutMix(α=1.0) applied 80% of batches")
+    print(f"  Augmentation S1: Mixup(α=0.4) + CutMix(α=1.0) @ 50% of batches (gentler for frozen backbone)")
+    print(f"  Augmentation S2: Mixup(α=0.4) + CutMix(α=1.0) @ 80% of batches")
+    print(f"  Weight decay:   {weight_decay} (excluded on BN/bias)")
+    print(f"  Grad clip:      {grad_clip}")
     print(f"  Patience:       {patience} epochs")
     print(f"  Workers:        {num_workers}")
-    print(f"  Dataset mean:   {dataset_mean}")
-    print(f"  Dataset std:    {dataset_std}")
+    print(f"  Dataset mean:   [{dataset_mean[0]:.4f}, {dataset_mean[1]:.4f}, {dataset_mean[2]:.4f}]")
+    print(f"  Dataset std:    [{dataset_std[0]:.4f}, {dataset_std[1]:.4f}, {dataset_std[2]:.4f}]")
 
     # ══════════════════════════════════════════════════════════════
     #  STAGE 1: FEATURE EXTRACTION (Frozen Backbone)
@@ -1160,14 +1277,13 @@ def main():
         num_iter=min(200, len(dataloaders["train"])),
     )
 
-    # Optimizer + Scheduler with found LR
+    # Optimizer — exclude BN/bias from weight decay
     optimizer = optim.AdamW(
-        [p for p in model.parameters() if p.requires_grad],
-        lr=suggested_lr_s1, weight_decay=weight_decay,
+        get_param_groups_no_decay(model, suggested_lr_s1, weight_decay),
     )
-    steps_per_epoch = len(dataloaders["train"])
+    steps_per_epoch_s1 = len(dataloaders["train"]) // accum_steps_s1
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
-        optimizer, T_0=steps_per_epoch * 2, T_mult=1, eta_min=suggested_lr_s1 / 100,
+        optimizer, T_0=steps_per_epoch_s1 * 2, T_mult=1, eta_min=suggested_lr_s1 / 100,
     )
 
     # W&B
@@ -1193,11 +1309,12 @@ def main():
         except Exception as e:
             print(f"  W&B init failed: {e}")
 
-    # Train Stage 1 (Mixup/CutMix ON for regularization)
+    # Train Stage 1 (Mixup 50%, per-batch scheduler)
     model, hist_s1, best_acc_s1 = train_stage(
         model, dataloaders, sizes, criterion, optimizer, scheduler,
         device, dirs, "Stage1_FeatureExtraction", s1_epochs, patience, grad_clip,
-        accum_steps=accum_steps_s1, use_mixup=True, wandb_run=wandb_run,
+        accum_steps=accum_steps_s1, use_mixup=True, mixup_prob=0.5,
+        step_scheduler_per_batch=True, wandb_run=wandb_run,
     )
     print(f"\n  ✅ Stage 1 done — Best Val Acc: {best_acc_s1:.4f}")
 
@@ -1236,20 +1353,35 @@ def main():
     lr_backbone = suggested_lr_s2 / 10
     print(f"  Discriminative LR — Head: {lr_head:.2e}, Backbone: {lr_backbone:.2e}")
 
-    param_groups = get_param_groups(model, lr_head, lr_backbone)
-    optimizer = optim.AdamW(param_groups, weight_decay=weight_decay)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=s2_epochs, eta_min=1e-7,
+    # Discriminative LR + no weight decay on BN/bias
+    param_groups = get_param_groups_discriminative_no_decay(model, lr_head, lr_backbone, weight_decay)
+    optimizer = optim.AdamW(param_groups)
+
+    # Warmup (2 epochs) → CosineAnnealing — prevents catastrophic forgetting
+    # when backbone is suddenly unfrozen at a potentially high LR
+    warmup_epochs = 2
+    warmup_scheduler = optim.lr_scheduler.LinearLR(
+        optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs,
     )
+    cosine_scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=s2_epochs - warmup_epochs, eta_min=1e-7,
+    )
+    scheduler = optim.lr_scheduler.SequentialLR(
+        optimizer,
+        schedulers=[warmup_scheduler, cosine_scheduler],
+        milestones=[warmup_epochs],
+    )
+    print(f"  Scheduler: LinearWarmup({warmup_epochs}ep) → CosineAnnealing({s2_epochs - warmup_epochs}ep)")
 
     if wandb_run and WANDB_AVAILABLE:
         wandb.config.update({"s2_lr_head": lr_head, "s2_lr_backbone": lr_backbone})
 
-    # Train Stage 2 (Mixup/CutMix ON for regularization)
+    # Train Stage 2 (Mixup 80%, per-EPOCH scheduler — critical difference)
     model, hist_s2, best_acc_s2 = train_stage(
         model, dataloaders, sizes, criterion, optimizer, scheduler,
         device, dirs, "Stage2_FineTuning", s2_epochs, patience, grad_clip,
-        accum_steps=accum_steps_s2, use_mixup=True, wandb_run=wandb_run,
+        accum_steps=accum_steps_s2, use_mixup=True, mixup_prob=0.8,
+        step_scheduler_per_batch=False, wandb_run=wandb_run,  # per-EPOCH for CosineAnnealingLR
     )
     print(f"\n  ✅ Stage 2 done — Best Val Acc: {best_acc_s2:.4f}")
 

@@ -27,7 +27,7 @@ os.makedirs(train_path, exist_ok=True)
 os.makedirs(val_path, exist_ok=True)
 os.makedirs(test_path, exist_ok=True)
 
-disease_classes = os.listdir(SOURCE_DATA_DIR)
+disease_classes = [d for d in os.listdir(SOURCE_DATA_DIR) if not d.startswith('.')]
 print(f"Found {len(disease_classes)} classes.")
 
 for disease_class in disease_classes:
