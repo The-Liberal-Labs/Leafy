@@ -28,6 +28,7 @@
 
 import argparse
 import copy
+import gc
 import json
 import logging
 import os
@@ -687,6 +688,10 @@ def run_lr_finder(model, train_loader, criterion, device, save_path,
 
     print(f"\n  🔍 Running LR Finder ({num_iter} iterations, LR: {start_lr:.0e} → {end_lr:.0e})...")
 
+    # Move original model to CPU to free GPU memory for the finder copy
+    model.cpu()
+    torch.cuda.empty_cache()
+
     # Create a fresh copy of the model for LR finding (so we don't corrupt weights)
     finder_model = copy.deepcopy(model)
     # Unwrap compiled model if needed
@@ -768,6 +773,9 @@ def run_lr_finder(model, train_loader, criterion, device, save_path,
     lr_finder.reset()
     del finder_model, lr_finder
     torch.cuda.empty_cache()
+
+    # Move original model back to device
+    model.to(device)
 
     return float(suggested_lr)
 
@@ -1187,6 +1195,10 @@ def main():
     parser.add_argument("--no-wandb", action="store_true", help="Disable W&B")
     parser.add_argument("--data-dir", default="./new_data", help="Path to train/val/test splits")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume from Stage 2 using saved Stage 1 checkpoint")
+    parser.add_argument("--wandb-run-id", type=str, default=None,
+                        help="W&B run ID to resume (use with --resume)")
     args = parser.parse_args()
 
     # ── Device ──
@@ -1213,14 +1225,14 @@ def main():
     # ── Hardware-aware config (nothing hardcoded) ──
     # Target: 16GB VRAM (Colab T4 or local 16GB GPU).
     if args.colab:
-        s1_batch, s2_batch, num_workers = 96, 64, 2
+        s1_batch, s2_batch, num_workers = 96, 24, 2
         accum_steps_s1, accum_steps_s2 = 1, 2    # Effective: 256, 256
     else:
-        s1_batch, s2_batch, num_workers = 96, 64, 6
-        accum_steps_s1, accum_steps_s2 = 1, 2    # Effective: 256, 256
+        s1_batch, s2_batch, num_workers = 96, 24, 6
+        accum_steps_s1, accum_steps_s2 = 1, 8    # Effective: 96, 96
 
     s1_img_size = 224
-    s2_img_size = 300
+    s2_img_size = 224
     s1_epochs = 1 if args.dry_run else 10   # More epochs for solid feature extraction
     s2_epochs = 1 if args.dry_run else 40   # Long fine-tuning with early stopping
     patience = 999 if args.dry_run else 10  # Patient early stopping
@@ -1246,77 +1258,155 @@ def main():
     print(f"  Dataset std:    [{dataset_std[0]:.4f}, {dataset_std[1]:.4f}, {dataset_std[2]:.4f}]")
 
     # ══════════════════════════════════════════════════════════════
-    #  STAGE 1: FEATURE EXTRACTION (Frozen Backbone)
+    #  RESUME CHECK
     # ══════════════════════════════════════════════════════════════
-    print("\n" + "═" * 60)
-    print("  📌 STAGE 1: Feature Extraction (backbone frozen)")
-    print("═" * 60)
+    s1_checkpoint_path = dirs["models"] / "best_model_Stage1_FeatureExtraction.pth"
+    s1_log_path = dirs["logs"] / "training_log_Stage1_FeatureExtraction.csv"
 
-    dataloaders, sizes, train_dataset = create_dataloaders(
-        args.data_dir, s1_img_size, s1_batch, dataset_mean, dataset_std, num_workers,
-    )
-    print(f"  Train: {sizes['train']:,}  Val: {sizes['val']:,}")
+    if args.resume:
+        # ── RESUME MODE: Skip Stage 1, load checkpoint ──
+        print("\n" + "═" * 60)
+        print("  ⏩ RESUME MODE: Skipping Stage 1, loading checkpoint")
+        print("═" * 60)
 
-    # Augmented samples visualization
-    plot_augmented_samples(train_dataset, class_names, dirs["images"] / "augmented_samples_stage1.png")
+        if not s1_checkpoint_path.exists():
+            print(f"  ❌ Stage 1 checkpoint not found: {s1_checkpoint_path}")
+            print("  Run without --resume to train from scratch.")
+            sys.exit(1)
 
-    # Class weights for loss
-    class_weights = compute_ens_class_weights(train_dataset, ens_beta, num_classes, device)
+        # Build model and load Stage 1 weights
+        model = build_model(num_classes, device)
+        checkpoint = torch.load(s1_checkpoint_path, map_location=device, weights_only=False)
+        raw = model._orig_mod if hasattr(model, "_orig_mod") else model
+        raw.load_state_dict(checkpoint["model_state_dict"])
+        best_acc_s1 = checkpoint.get("accuracy", 0.0)
+        print(f"  ✅ Loaded Stage 1 checkpoint (Val Acc: {best_acc_s1:.4f})")
+        model = try_compile(model)
 
-    # Model
-    model = build_model(num_classes, device)
-    model = try_compile(model)
+        # Reconstruct Stage 1 history from CSV log
+        hist_s1 = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": [], "lr": []}
+        if s1_log_path.exists():
+            s1_df = pd.read_csv(s1_log_path)
+            hist_s1["train_loss"] = s1_df["train_loss"].tolist()
+            hist_s1["train_acc"] = s1_df["train_acc"].tolist()
+            hist_s1["val_loss"] = s1_df["val_loss"].tolist()
+            hist_s1["val_acc"] = s1_df["val_acc"].tolist()
+            hist_s1["lr"] = s1_df["lr"].tolist()
+            print(f"  📄 Loaded Stage 1 history ({len(s1_df)} epochs from CSV)")
+        else:
+            print("  ⚠️  Stage 1 CSV log not found — training history plot will only show Stage 2")
 
-    # Loss — Focal Loss (better than CE for imbalanced data)
-    criterion = FocalLoss(weight=class_weights, gamma=focal_gamma, label_smoothing=label_smoothing)
+        # Resume W&B run
+        wandb_run = None
+        if WANDB_AVAILABLE and not args.no_wandb:
+            try:
+                if args.wandb_run_id:
+                    wandb_run = wandb.init(
+                        project="leafy",
+                        id=args.wandb_run_id,
+                        resume="must",
+                    )
+                    print(f"  📊 Resumed W&B run: {args.wandb_run_id}")
+                else:
+                    wandb_run = wandb.init(
+                        project="leafy",
+                        name=f"EfficientNetV2S_resumed_{int(time.time())}",
+                        config={
+                            "architecture": "EfficientNet-V2-S",
+                            "num_classes": num_classes,
+                            "s1_epochs": s1_epochs, "s2_epochs": s2_epochs,
+                            "s1_img_size": s1_img_size, "s2_img_size": s2_img_size,
+                            "s1_batch": s1_batch, "s2_batch": s2_batch,
+                            "s1_best_acc": best_acc_s1,
+                            "label_smoothing": label_smoothing,
+                            "weight_decay": weight_decay,
+                            "dataset_mean": dataset_mean, "dataset_std": dataset_std,
+                            "resumed": True,
+                        },
+                        tags=["efficientnet-v2-s", "plant-pathology", "resumed"],
+                    )
+                    print(f"  📊 Started new W&B run (no run ID provided for resume)")
+            except Exception as e:
+                print(f"  W&B init failed: {e}")
 
-    # ── LR Finder for Stage 1 ──
-    suggested_lr_s1 = run_lr_finder(
-        model, dataloaders["train"], criterion, device,
-        save_path=dirs["images"] / "lr_finder_stage1.png",
-        num_iter=min(200, len(dataloaders["train"])),
-    )
+    else:
+        # ══════════════════════════════════════════════════════════════
+        #  STAGE 1: FEATURE EXTRACTION (Frozen Backbone)
+        # ══════════════════════════════════════════════════════════════
+        print("\n" + "═" * 60)
+        print("  📌 STAGE 1: Feature Extraction (backbone frozen)")
+        print("═" * 60)
 
-    # Optimizer — exclude BN/bias from weight decay
-    optimizer = optim.AdamW(
-        get_param_groups_no_decay(model, suggested_lr_s1, weight_decay),
-    )
-    steps_per_epoch_s1 = len(dataloaders["train"]) // accum_steps_s1
-    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
-        optimizer, T_0=steps_per_epoch_s1 * 2, T_mult=1, eta_min=suggested_lr_s1 / 100,
-    )
+        dataloaders, sizes, train_dataset = create_dataloaders(
+            args.data_dir, s1_img_size, s1_batch, dataset_mean, dataset_std, num_workers,
+        )
+        print(f"  Train: {sizes['train']:,}  Val: {sizes['val']:,}")
 
-    # W&B
-    wandb_run = None
-    if WANDB_AVAILABLE and not args.no_wandb:
-        try:
-            wandb_run = wandb.init(
-                project="leafy",
-                name=f"EfficientNetV2S_{int(time.time())}",
-                config={
-                    "architecture": "EfficientNet-V2-S",
-                    "num_classes": num_classes,
-                    "s1_epochs": s1_epochs, "s2_epochs": s2_epochs,
-                    "s1_img_size": s1_img_size, "s2_img_size": s2_img_size,
-                    "s1_batch": s1_batch, "s2_batch": s2_batch,
-                    "s1_lr": suggested_lr_s1,
-                    "label_smoothing": label_smoothing,
-                    "weight_decay": weight_decay,
-                    "dataset_mean": dataset_mean, "dataset_std": dataset_std,
-                },
-                tags=["efficientnet-v2-s", "plant-pathology"],
-            )
-        except Exception as e:
-            print(f"  W&B init failed: {e}")
+        # Augmented samples visualization
+        plot_augmented_samples(train_dataset, class_names, dirs["images"] / "augmented_samples_stage1.png")
 
-    # Train Stage 1 (Mixup 50%, per-batch scheduler)
-    model, hist_s1, best_acc_s1 = train_stage(
-        model, dataloaders, sizes, criterion, optimizer, scheduler,
-        device, dirs, "Stage1_FeatureExtraction", s1_epochs, patience, grad_clip,
-        accum_steps=accum_steps_s1, use_mixup=True, mixup_prob=0.5,
-        step_scheduler_per_batch=True, wandb_run=wandb_run,
-    )
-    print(f"\n  ✅ Stage 1 done — Best Val Acc: {best_acc_s1:.4f}")
+        # Class weights for loss
+        class_weights = compute_ens_class_weights(train_dataset, ens_beta, num_classes, device)
+
+        # Model
+        model = build_model(num_classes, device)
+        model = try_compile(model)
+
+        # Loss — Focal Loss (better than CE for imbalanced data)
+        criterion = FocalLoss(weight=class_weights, gamma=focal_gamma, label_smoothing=label_smoothing)
+
+        # ── LR Finder for Stage 1 ──
+        suggested_lr_s1 = run_lr_finder(
+            model, dataloaders["train"], criterion, device,
+            save_path=dirs["images"] / "lr_finder_stage1.png",
+            num_iter=min(200, len(dataloaders["train"])),
+        )
+
+        # Optimizer — exclude BN/bias from weight decay
+        optimizer = optim.AdamW(
+            get_param_groups_no_decay(model, suggested_lr_s1, weight_decay),
+        )
+        steps_per_epoch_s1 = len(dataloaders["train"]) // accum_steps_s1
+        scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            optimizer, T_0=steps_per_epoch_s1 * 2, T_mult=1, eta_min=suggested_lr_s1 / 100,
+        )
+
+        # W&B
+        wandb_run = None
+        if WANDB_AVAILABLE and not args.no_wandb:
+            try:
+                wandb_run = wandb.init(
+                    project="leafy",
+                    name=f"EfficientNetV2S_{int(time.time())}",
+                    config={
+                        "architecture": "EfficientNet-V2-S",
+                        "num_classes": num_classes,
+                        "s1_epochs": s1_epochs, "s2_epochs": s2_epochs,
+                        "s1_img_size": s1_img_size, "s2_img_size": s2_img_size,
+                        "s1_batch": s1_batch, "s2_batch": s2_batch,
+                        "s1_lr": suggested_lr_s1,
+                        "label_smoothing": label_smoothing,
+                        "weight_decay": weight_decay,
+                        "dataset_mean": dataset_mean, "dataset_std": dataset_std,
+                    },
+                    tags=["efficientnet-v2-s", "plant-pathology"],
+                )
+            except Exception as e:
+                print(f"  W&B init failed: {e}")
+
+        # Train Stage 1 (Mixup 50%, per-batch scheduler)
+        model, hist_s1, best_acc_s1 = train_stage(
+            model, dataloaders, sizes, criterion, optimizer, scheduler,
+            device, dirs, "Stage1_FeatureExtraction", s1_epochs, patience, grad_clip,
+            accum_steps=accum_steps_s1, use_mixup=True, mixup_prob=0.5,
+            step_scheduler_per_batch=True, wandb_run=wandb_run,
+        )
+        print(f"\n  ✅ Stage 1 done — Best Val Acc: {best_acc_s1:.4f}")
+
+        # Clean up Stage 1 resources before Stage 2
+        del dataloaders, optimizer, scheduler
+        torch.cuda.empty_cache()
+        gc.collect()
 
     # ══════════════════════════════════════════════════════════════
     #  STAGE 2: FINE-TUNING (All Layers Unfrozen)
@@ -1324,6 +1414,10 @@ def main():
     print("\n" + "═" * 60)
     print("  🔓 STAGE 2: Fine-Tuning (all layers unfrozen)")
     print("═" * 60)
+
+    # Clean up before Stage 2 dataloaders
+    torch.cuda.empty_cache()
+    gc.collect()
 
     # Higher resolution dataloaders
     dataloaders, sizes, train_dataset = create_dataloaders(
