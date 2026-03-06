@@ -1226,14 +1226,14 @@ def main():
     # Target: 16GB VRAM (Colab T4 or local 16GB GPU).
     if args.colab:
         s1_batch, s2_batch, num_workers = 96, 24, 2
-        accum_steps_s1, accum_steps_s2 = 1, 2    # Effective: 256, 256
+        accum_steps_s1, accum_steps_s2 = 1, 4    # Effective: 256, 256
     else:
-        s1_batch, s2_batch, num_workers = 96, 24, 6
-        accum_steps_s1, accum_steps_s2 = 1, 8    # Effective: 96, 96
+        s1_batch, s2_batch, num_workers = 96, 12, 6
+        accum_steps_s1, accum_steps_s2 = 1, 4    # Effective: 96, 96
 
     s1_img_size = 224
     s2_img_size = 224
-    s1_epochs = 1 if args.dry_run else 10   # More epochs for solid feature extraction
+    s1_epochs = 1 if args.dry_run else 8   # More epochs for solid feature extraction
     s2_epochs = 1 if args.dry_run else 40   # Long fine-tuning with early stopping
     patience = 999 if args.dry_run else 10  # Patient early stopping
     ens_beta = 0.999
