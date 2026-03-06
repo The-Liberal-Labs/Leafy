@@ -53,7 +53,7 @@ from sklearn.metrics import (
     confusion_matrix,
     precision_recall_fscore_support,
 )
-from torch.utils.data import DataLoader, WeightedRandomSampler
+from torch.utils.data import DataLoader, Subset, WeightedRandomSampler
 from torchvision import datasets, models, transforms
 from torchvision.transforms import v2 as T_v2
 from tqdm import tqdm
@@ -132,6 +132,42 @@ def seed_everything(seed=42):
     print(f"  Seed set to {seed} (cudnn.benchmark=True for speed)")
 
 
+def configure_runtime(device):
+    """Enable safe runtime optimizations for the active device."""
+    if device.type != "cuda":
+        return
+
+    torch.set_float32_matmul_precision("high")
+    if hasattr(torch.backends.cuda.matmul, "allow_tf32"):
+        torch.backends.cuda.matmul.allow_tf32 = True
+    if hasattr(torch.backends.cudnn, "allow_tf32"):
+        torch.backends.cudnn.allow_tf32 = True
+    print("  Runtime optimizations: matmul_precision=high, TF32 enabled when supported")
+
+
+def get_system_memory_gb():
+    """Best-effort detection of system RAM in GB without extra dependencies."""
+    try:
+        if hasattr(os, "sysconf") and "SC_PAGE_SIZE" in os.sysconf_names and "SC_PHYS_PAGES" in os.sysconf_names:
+            page_size = os.sysconf("SC_PAGE_SIZE")
+            phys_pages = os.sysconf("SC_PHYS_PAGES")
+            return (page_size * phys_pages) / 1e9
+    except (ValueError, OSError, AttributeError):
+        pass
+
+    try:
+        if sys.platform.startswith("linux"):
+            with open("/proc/meminfo", "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        mem_kb = int(line.split()[1])
+                        return mem_kb / 1e6
+    except (OSError, ValueError, IndexError):
+        pass
+
+    return 0.0
+
+
 # ======================================================================
 #                      LOGGING (tee to file)
 # ======================================================================
@@ -188,6 +224,147 @@ def create_output_dirs(base_name="EfficientNetV2S"):
     print(f"     models/  — checkpoints, PTH, ONNX, class_names.json")
     print(f"     logs/    — CSV training logs")
     return dirs
+
+
+def get_hardware_profile(device, requested_profile="auto", colab=False):
+    """Return batch sizes and image sizes tuned for the current hardware."""
+    cpu_count = os.cpu_count() or 2
+    system_ram_gb = get_system_memory_gb()
+    worker_cap_from_ram = max(2, min(8, int(system_ram_gb // 2))) if system_ram_gb > 0 else 4
+    base_workers = max(2, min(cpu_count // 2, worker_cap_from_ram))
+    profiles = {
+        "cpu": {
+            "name": "cpu",
+            "s1_batch": 16,
+            "s2_batch": 4,
+            "accum_steps_s1": 1,
+            "accum_steps_s2": 4,
+            "s1_img_size": 224,
+            "s2_img_size": 224,
+            "num_workers": max(2, min(base_workers, 4)),
+        },
+        "mobile_8gb": {
+            "name": "mobile_8gb",
+            "s1_batch": 128,
+            "s2_batch": 24,
+            "accum_steps_s1": 1,
+            "accum_steps_s2": 2,
+            "s1_img_size": 224,
+            "s2_img_size": 224,
+            "num_workers": min(base_workers, 6),
+        },
+        "rtx_12gb": {
+            "name": "rtx_12gb",
+            "s1_batch": 160,
+            "s2_batch": 32,
+            "accum_steps_s1": 1,
+            "accum_steps_s2": 1,
+            "s1_img_size": 224,
+            "s2_img_size": 260,
+            "num_workers": min(base_workers, 6),
+        },
+        "t4_16gb": {
+            "name": "t4_16gb",
+            "s1_batch": 192,
+            "s2_batch": 40,
+            "accum_steps_s1": 1,
+            "accum_steps_s2": 2,
+            "s1_img_size": 224,
+            "s2_img_size": 260,
+            "num_workers": 4 if colab else min(base_workers, 4),
+        },
+        "generic_16gb": {
+            "name": "generic_16gb",
+            "s1_batch": 224,
+            "s2_batch": 48,
+            "accum_steps_s1": 1,
+            "accum_steps_s2": 1,
+            "s1_img_size": 224,
+            "s2_img_size": 260,
+            "num_workers": 4 if colab else min(base_workers, 6),
+        },
+        "generic_24gb": {
+            "name": "generic_24gb",
+            "s1_batch": 256,
+            "s2_batch": 64,
+            "accum_steps_s1": 1,
+            "accum_steps_s2": 1,
+            "s1_img_size": 224,
+            "s2_img_size": 300,
+            "num_workers": min(base_workers, 8),
+        },
+    }
+
+    if device.type != "cuda":
+        profile = profiles["cpu"].copy()
+        profile["cpu_count"] = cpu_count
+        profile["system_ram_gb"] = system_ram_gb
+        profile["gpu_name"] = "cpu"
+        profile["vram_gb"] = 0.0
+        return profile
+
+    if requested_profile != "auto":
+        if requested_profile not in profiles:
+            raise ValueError(f"Unknown GPU profile: {requested_profile}")
+        profile = profiles[requested_profile].copy()
+        props = torch.cuda.get_device_properties(0)
+        profile["cpu_count"] = cpu_count
+        profile["system_ram_gb"] = system_ram_gb
+        profile["gpu_name"] = props.name
+        profile["vram_gb"] = props.total_memory / 1e9
+        return profile
+
+    props = torch.cuda.get_device_properties(0)
+    vram_gb = props.total_memory / 1e9
+    gpu_name = props.name.lower()
+
+    if "t4" in gpu_name and vram_gb >= 14:
+        profile = profiles["t4_16gb"].copy()
+    elif "4070" in gpu_name and vram_gb >= 11:
+        profile = profiles["rtx_12gb"].copy()
+    elif vram_gb >= 22:
+        profile = profiles["generic_24gb"].copy()
+    elif vram_gb >= 14:
+        profile = profiles["generic_16gb"].copy()
+    else:
+        profile = profiles["mobile_8gb"].copy()
+
+    profile["cpu_count"] = cpu_count
+    profile["system_ram_gb"] = system_ram_gb
+    profile["gpu_name"] = props.name
+    profile["vram_gb"] = vram_gb
+
+    # Keep workers conservative on low-RAM machines.
+    if system_ram_gb and system_ram_gb <= 16:
+        profile["num_workers"] = min(profile["num_workers"], 4)
+    if cpu_count <= 8:
+        profile["num_workers"] = min(profile["num_workers"], max(2, cpu_count // 2))
+
+    return profile
+
+
+def resolve_run_config(args, device):
+    """Return the final runtime config from either auto-detect or explicit custom overrides."""
+    hardware = get_hardware_profile(device, args.gpu_profile, colab=args.colab)
+    config = hardware.copy()
+    config["run_type"] = args.run_type
+
+    if args.run_type == "custom":
+        overrides = {
+            "s1_batch": args.s1_batch,
+            "s2_batch": args.s2_batch,
+            "accum_steps_s1": args.accum_steps_s1,
+            "accum_steps_s2": args.accum_steps_s2,
+            "s1_img_size": args.s1_img_size,
+            "s2_img_size": args.s2_img_size,
+            "num_workers": args.num_workers,
+        }
+        for key, value in overrides.items():
+            if value is not None:
+                config[key] = value
+        config["name"] = f"custom({hardware['name']})"
+
+    return config
 
 
 # ======================================================================
@@ -347,29 +524,49 @@ def compute_dataset_stats(data_dir, sample_size=5000):
 #                DATA TRANSFORMS & LOADERS
 # ======================================================================
 
-def get_train_transforms(image_size, mean, std):
+def get_train_transforms(
+    image_size,
+    mean,
+    std,
+    crop_scale=(0.6, 1.0),
+    ratio=(0.75, 1.33),
+    horizontal_flip_p=0.5,
+    vertical_flip_p=0.3,
+    rotation_degrees=20,
+    translate=(0.1, 0.1),
+    shear=10,
+    randaugment_num_ops=2,
+    randaugment_magnitude=9,
+    color_jitter_strength=0.3,
+    random_erasing_p=0.15,
+):
     """
     Best-practice training augmentation pipeline for plant pathology.
     Includes geometric, color, and erasing augmentations.
     """
     return transforms.Compose([
         # Geometric
-        transforms.RandomResizedCrop(image_size, scale=(0.6, 1.0), ratio=(0.75, 1.33)),
-        transforms.RandomHorizontalFlip(p=0.5),
-        transforms.RandomVerticalFlip(p=0.3),
-        transforms.RandomRotation(degrees=20),
-        transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), shear=10),
+        transforms.RandomResizedCrop(image_size, scale=crop_scale, ratio=ratio),
+        transforms.RandomHorizontalFlip(p=horizontal_flip_p),
+        transforms.RandomVerticalFlip(p=vertical_flip_p),
+        transforms.RandomRotation(degrees=rotation_degrees),
+        transforms.RandomAffine(degrees=0, translate=translate, shear=shear),
 
         # Color / Auto-augment
-        transforms.RandAugment(num_ops=2, magnitude=9),
-        transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.05),
+        transforms.RandAugment(num_ops=randaugment_num_ops, magnitude=randaugment_magnitude),
+        transforms.ColorJitter(
+            brightness=color_jitter_strength,
+            contrast=color_jitter_strength,
+            saturation=color_jitter_strength,
+            hue=min(0.05, color_jitter_strength / 6),
+        ),
 
         # To tensor + normalize with DATASET-SPECIFIC stats
         transforms.ToTensor(),
         transforms.Normalize(mean, std),
 
         # Regularization
-        transforms.RandomErasing(p=0.15, scale=(0.02, 0.2), ratio=(0.3, 3.3)),
+        transforms.RandomErasing(p=random_erasing_p, scale=(0.02, 0.2), ratio=(0.3, 3.3)),
     ])
 
 
@@ -438,21 +635,32 @@ def compute_ens_class_weights(dataset, beta, num_classes, device):
     return torch.FloatTensor(weights).to(device)
 
 
-def create_dataloaders(data_dir, image_size, batch_size, mean, std, num_workers):
-    """Create train/val dataloaders with WeightedRandomSampler."""
+def create_dataloaders(
+    data_dir,
+    image_size,
+    batch_size,
+    mean,
+    std,
+    num_workers,
+    train_transform=None,
+    use_weighted_sampler=True,
+):
+    """Create train/val dataloaders with optional WeightedRandomSampler."""
+    if train_transform is None:
+        train_transform = get_train_transforms(image_size, mean, std)
+
     train_dataset = datasets.ImageFolder(
         os.path.join(data_dir, "train"),
-        get_train_transforms(image_size, mean, std),
+        train_transform,
     )
     val_dataset = datasets.ImageFolder(
         os.path.join(data_dir, "val"),
         get_eval_transforms(image_size, mean, std),
     )
-
-    sampler = create_weighted_sampler(train_dataset)
+    sampler = create_weighted_sampler(train_dataset) if use_weighted_sampler else None
 
     train_loader = DataLoader(
-        train_dataset, batch_size=batch_size, sampler=sampler,
+        train_dataset, batch_size=batch_size, sampler=sampler, shuffle=(sampler is None),
         num_workers=num_workers, pin_memory=True, persistent_workers=True, drop_last=True,
     )
     val_loader = DataLoader(
@@ -462,6 +670,29 @@ def create_dataloaders(data_dir, image_size, batch_size, mean, std, num_workers)
 
     sizes = {"train": len(train_dataset), "val": len(val_dataset)}
     return {"train": train_loader, "val": val_loader}, sizes, train_dataset
+
+
+def create_train_eval_loader(data_dir, image_size, mean, std, batch_size, num_workers, max_samples=4096):
+    """Create a deterministic training-subset loader for apples-to-apples train/val comparison."""
+    train_eval_dataset = datasets.ImageFolder(
+        os.path.join(data_dir, "train"),
+        get_eval_transforms(image_size, mean, std),
+    )
+
+    if max_samples and len(train_eval_dataset) > max_samples:
+        rng = np.random.default_rng(42)
+        indices = np.sort(rng.choice(len(train_eval_dataset), size=max_samples, replace=False))
+        train_eval_dataset = Subset(train_eval_dataset, indices.tolist())
+
+    train_eval_loader = DataLoader(
+        train_eval_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=True,
+    )
+    return train_eval_loader, len(train_eval_dataset)
 
 
 # ======================================================================
@@ -552,6 +783,13 @@ def mixup_criterion(criterion, pred, y_a, y_b, lam):
     return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
 
 
+def soft_mix_accuracy(preds, targets_a, targets_b, lam):
+    """Score mixed-label batches without penalizing correct secondary-label predictions."""
+    correct_a = preds.eq(targets_a).float()
+    correct_b = preds.eq(targets_b).float()
+    return (lam * correct_a + (1 - lam) * correct_b).sum().item()
+
+
 # ======================================================================
 #                          MODEL
 # ======================================================================
@@ -568,19 +806,22 @@ def build_model(num_classes, device):
     # Stronger classification head (wider layers to handle 116 classes)
     in_features = model.classifier[1].in_features  # 1280
     model.classifier = nn.Sequential(
-        nn.Dropout(p=0.3),
+        nn.Dropout(p=0.2),
         nn.Linear(in_features, 768),
         nn.BatchNorm1d(768),
         nn.SiLU(inplace=True),
-        nn.Dropout(p=0.2),
+        nn.Dropout(p=0.1),
         nn.Linear(768, 384),
         nn.BatchNorm1d(384),
         nn.SiLU(inplace=True),
-        nn.Dropout(p=0.15),
+        nn.Dropout(p=0.05),
         nn.Linear(384, num_classes),
     )
 
     model = model.to(device)
+    if device.type == "cuda":
+        model = model.to(memory_format=torch.channels_last)
+        print("  Memory format: channels_last")
 
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model.parameters())
@@ -786,6 +1027,7 @@ def run_lr_finder(model, train_loader, criterion, device, save_path,
 
 def train_one_epoch(model, loader, criterion, optimizer, scheduler, scaler, device,
                     grad_clip, accum_steps=1, use_mixup=True, mixup_prob=0.5,
+                    use_cutmix=True,
                     step_scheduler_per_batch=True):
     """
     Train for one epoch with:
@@ -802,14 +1044,18 @@ def train_one_epoch(model, loader, criterion, optimizer, scheduler, scaler, devi
     for step, (inputs, labels) in enumerate(tqdm(loader, desc="  Train", leave=False)):
         inputs = inputs.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
+        if device.type == "cuda":
+            inputs = inputs.contiguous(memory_format=torch.channels_last)
 
         # --- Mixup / CutMix ---
         apply_mix = use_mixup and (random.random() < mixup_prob)
         if apply_mix:
-            if random.random() < 0.5:
+            if use_cutmix and random.random() < 0.5:
                 inputs, targets_a, targets_b, lam = mixup_data(inputs, labels, alpha=0.4)
             else:
-                inputs, targets_a, targets_b, lam = cutmix_data(inputs, labels, alpha=1.0)
+                mix_fn = cutmix_data if use_cutmix else mixup_data
+                alpha = 1.0 if use_cutmix else 0.2
+                inputs, targets_a, targets_b, lam = mix_fn(inputs, labels, alpha=alpha)
 
         with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
             outputs = model(inputs)
@@ -837,7 +1083,10 @@ def train_one_epoch(model, loader, criterion, optimizer, scheduler, scaler, devi
         _, preds = torch.max(outputs, 1)
         bs = inputs.size(0)
         running_loss += loss.item() * accum_steps * bs  # Undo scaling for logging
-        running_corrects += (preds == labels).sum().item()
+        if apply_mix:
+            running_corrects += soft_mix_accuracy(preds, targets_a, targets_b, lam)
+        else:
+            running_corrects += (preds == labels).sum().item()
         total += bs
 
     return running_loss / total, running_corrects / total
@@ -854,6 +1103,8 @@ def validate(model, loader, criterion, device):
     for inputs, labels in tqdm(loader, desc="  Val  ", leave=False):
         inputs = inputs.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
+        if device.type == "cuda":
+            inputs = inputs.contiguous(memory_format=torch.channels_last)
 
         with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
             outputs = model(inputs)
@@ -871,7 +1122,10 @@ def validate(model, loader, criterion, device):
 def train_stage(model, dataloaders, dataset_sizes, criterion, optimizer, scheduler,
                 device, dirs, stage_name, num_epochs, patience, grad_clip,
                 accum_steps=1, use_mixup=True, mixup_prob=0.5,
-                step_scheduler_per_batch=True, wandb_run=None):
+                final_mixup_prob=None,
+                use_cutmix=True,
+                step_scheduler_per_batch=True, wandb_run=None,
+                train_eval_loader=None):
     """
     Full training loop for one stage (feature extraction OR fine-tuning).
     Saves checkpoints, CSV logs, and returns (model, history, best_acc).
@@ -884,7 +1138,17 @@ def train_stage(model, dataloaders, dataset_sizes, criterion, optimizer, schedul
     best_acc = 0.0
     best_model_wts = None
     epochs_no_improve = 0
-    history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": [], "lr": []}
+    history = {
+        "train_loss": [],
+        "train_acc": [],
+        "train_clean_loss": [],
+        "train_clean_acc": [],
+        "val_loss": [],
+        "val_acc": [],
+        "lr": [],
+    }
+    if final_mixup_prob is None:
+        final_mixup_prob = mixup_prob
 
     checkpoint_path = dirs["models"] / f"best_model_{stage_name}.pth"
     log_path = dirs["logs"] / f"training_log_{stage_name}.csv"
@@ -896,17 +1160,28 @@ def train_stage(model, dataloaders, dataset_sizes, criterion, optimizer, schedul
     print(f"\n{'═' * 60}")
     print(f"  🏋️ {stage_name}: {num_epochs} epochs (patience={patience})")
     print(f"    Scheduler: {'per-batch' if step_scheduler_per_batch else 'per-epoch'}")
-    print(f"    Mixup/CutMix: {'ON' if use_mixup else 'OFF'} (prob={mixup_prob})")
+    aug_label = "Mixup+CutMix" if use_cutmix else "Mixup-only"
+    print(
+        f"    Label mixing: {aug_label if use_mixup else 'OFF'} "
+        f"(prob={mixup_prob:.2f} -> {final_mixup_prob:.2f})"
+    )
+    print("    Train accuracy uses soft labels; clean-train eval uses deterministic transforms")
     print(f"{'═' * 60}")
 
     for epoch in range(num_epochs):
         t0 = time.time()
+        progress = epoch / max(1, num_epochs - 1)
+        current_mixup_prob = mixup_prob + (final_mixup_prob - mixup_prob) * progress
 
         train_loss, train_acc = train_one_epoch(
             model, dataloaders["train"], criterion, optimizer, scheduler, scaler, device,
-            grad_clip, accum_steps=accum_steps, use_mixup=use_mixup, mixup_prob=mixup_prob,
+            grad_clip, accum_steps=accum_steps, use_mixup=use_mixup, mixup_prob=current_mixup_prob,
+            use_cutmix=use_cutmix,
             step_scheduler_per_batch=step_scheduler_per_batch,
         )
+        train_clean_loss, train_clean_acc = (None, None)
+        if train_eval_loader is not None:
+            train_clean_loss, train_clean_acc = validate(model, train_eval_loader, criterion, device)
         val_loss, val_acc = validate(model, dataloaders["val"], criterion, device)
 
         # Get current LR (from head param group if multiple)
@@ -923,6 +1198,8 @@ def train_stage(model, dataloaders, dataset_sizes, criterion, optimizer, schedul
         # History
         history["train_loss"].append(train_loss)
         history["train_acc"].append(train_acc)
+        history["train_clean_loss"].append(train_clean_loss)
+        history["train_clean_acc"].append(train_clean_acc)
         history["val_loss"].append(val_loss)
         history["val_acc"].append(val_acc)
         history["lr"].append(current_lr)
@@ -932,12 +1209,18 @@ def train_stage(model, dataloaders, dataset_sizes, criterion, optimizer, schedul
         gpu_max = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0
 
         # Overfitting detection
-        overfit_gap = train_acc - val_acc
+        compare_acc = train_clean_acc if train_clean_acc is not None else train_acc
+        overfit_gap = compare_acc - val_acc
         overfit_flag = " ⚠️OVF" if overfit_gap > 0.10 else ""
 
         # Print
+        clean_train_str = (
+            f"  ClLoss {train_clean_loss:.4f}  ClAcc {train_clean_acc:.4f} │"
+            if train_clean_acc is not None else ""
+        )
         print(f"  Ep {epoch+1:02d}/{num_epochs} │ "
-              f"TrLoss {train_loss:.4f}  TrAcc {train_acc:.4f} │ "
+              f"TrLoss {train_loss:.4f}  TrAcc {train_acc:.4f} │"
+              f"{clean_train_str} "
               f"VaLoss {val_loss:.4f}  VaAcc {val_acc:.4f} │ "
               f"LR {current_lr:.2e} │ GPU {gpu_mem:.1f}/{gpu_max:.1f}GB │ {dt:.0f}s{overfit_flag}")
 
@@ -946,15 +1229,20 @@ def train_stage(model, dataloaders, dataset_sizes, criterion, optimizer, schedul
             wandb.log({
                 f"{stage_name}/train_loss": train_loss,
                 f"{stage_name}/train_acc": train_acc,
+                f"{stage_name}/train_clean_loss": train_clean_loss,
+                f"{stage_name}/train_clean_acc": train_clean_acc,
                 f"{stage_name}/val_loss": val_loss,
                 f"{stage_name}/val_acc": val_acc,
                 f"{stage_name}/lr": current_lr,
+                f"{stage_name}/mixup_prob": current_mixup_prob,
             })
 
         # CSV log
         row = pd.DataFrame([{
             "epoch": epoch + 1, "train_loss": train_loss, "train_acc": train_acc,
+            "train_clean_loss": train_clean_loss, "train_clean_acc": train_clean_acc,
             "val_loss": val_loss, "val_acc": val_acc, "lr": current_lr,
+            "mixup_prob": current_mixup_prob,
         }])
         row.to_csv(log_path, mode="a", header=not log_path.exists(), index=False)
 
@@ -999,6 +1287,8 @@ def evaluate_model(model, dataloader, device):
     all_preds, all_labels = [], []
     for inputs, labels in tqdm(dataloader, desc="  Evaluating"):
         inputs = inputs.to(device, non_blocking=True)
+        if device.type == "cuda":
+            inputs = inputs.contiguous(memory_format=torch.channels_last)
         with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
             outputs = model(inputs)
         _, preds = torch.max(outputs, 1)
@@ -1011,8 +1301,10 @@ def plot_training_history(hist_s1, hist_s2, save_path):
     """Plot combined training curves from both stages."""
     # Combine
     train_acc = hist_s1["train_acc"] + hist_s2["train_acc"]
+    train_clean_acc = hist_s1.get("train_clean_acc", []) + hist_s2.get("train_clean_acc", [])
     val_acc = hist_s1["val_acc"] + hist_s2["val_acc"]
     train_loss = hist_s1["train_loss"] + hist_s2["train_loss"]
+    train_clean_loss = hist_s1.get("train_clean_loss", []) + hist_s2.get("train_clean_loss", [])
     val_loss = hist_s1["val_loss"] + hist_s2["val_loss"]
     lrs = hist_s1["lr"] + hist_s2["lr"]
     s1_end = len(hist_s1["train_acc"])
@@ -1022,7 +1314,9 @@ def plot_training_history(hist_s1, hist_s2, save_path):
 
     # Accuracy
     ax = axes[0]
-    ax.plot(train_acc, label="Train Acc", linewidth=2, marker="o", markersize=3)
+    ax.plot(train_acc, label="Train Acc (aug)", linewidth=2, marker="o", markersize=3)
+    if train_clean_acc and any(v is not None for v in train_clean_acc):
+        ax.plot(train_clean_acc, label="Train Acc (clean)", linewidth=2, marker="^", markersize=3)
     ax.plot(val_acc, label="Val Acc", linewidth=2, marker="s", markersize=3)
     ax.axvline(x=s1_end - 0.5, color="gray", linestyle="--", alpha=0.6, label="Stage 1→2")
     best_idx = int(np.argmax(val_acc))
@@ -1035,7 +1329,9 @@ def plot_training_history(hist_s1, hist_s2, save_path):
 
     # Loss
     ax = axes[1]
-    ax.plot(train_loss, label="Train Loss", linewidth=2, marker="o", markersize=3)
+    ax.plot(train_loss, label="Train Loss (aug)", linewidth=2, marker="o", markersize=3)
+    if train_clean_loss and any(v is not None for v in train_clean_loss):
+        ax.plot(train_clean_loss, label="Train Loss (clean)", linewidth=2, marker="^", markersize=3)
     ax.plot(val_loss, label="Val Loss", linewidth=2, marker="s", markersize=3)
     ax.axvline(x=s1_end - 0.5, color="gray", linestyle="--", alpha=0.6, label="Stage 1→2")
     ax.set_title("Loss", fontsize=13); ax.set_xlabel("Epoch"); ax.set_ylabel("Loss")
@@ -1195,6 +1491,25 @@ def main():
     parser.add_argument("--no-wandb", action="store_true", help="Disable W&B")
     parser.add_argument("--data-dir", default="./new_data", help="Path to train/val/test splits")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument(
+        "--run-type",
+        default="auto",
+        choices=["auto", "custom"],
+        help="Use auto-detected hardware settings or custom manual settings",
+    )
+    parser.add_argument(
+        "--gpu-profile",
+        default="auto",
+        choices=["auto", "cpu", "mobile_8gb", "rtx_12gb", "t4_16gb", "generic_16gb", "generic_24gb"],
+        help="Hardware profile for batch sizes and image sizes",
+    )
+    parser.add_argument("--s1-batch", type=int, default=None, help="Custom Stage 1 batch size")
+    parser.add_argument("--s2-batch", type=int, default=None, help="Custom Stage 2 batch size")
+    parser.add_argument("--accum-steps-s1", type=int, default=None, help="Custom Stage 1 gradient accumulation")
+    parser.add_argument("--accum-steps-s2", type=int, default=None, help="Custom Stage 2 gradient accumulation")
+    parser.add_argument("--s1-img-size", type=int, default=None, help="Custom Stage 1 image size")
+    parser.add_argument("--s2-img-size", type=int, default=None, help="Custom Stage 2 image size")
+    parser.add_argument("--num-workers", type=int, default=None, help="Custom dataloader worker count")
     parser.add_argument("--resume", action="store_true",
                         help="Resume from Stage 2 using saved Stage 1 checkpoint")
     parser.add_argument("--wandb-run-id", type=str, default=None,
@@ -1205,6 +1520,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print_cuda_diagnostics()
     seed_everything(args.seed)
+    configure_runtime(device)
 
     # ── Output folders ──
     dirs = create_output_dirs("EfficientNetV2S")
@@ -1222,37 +1538,48 @@ def main():
     # Compute dataset-specific mean/std
     dataset_mean, dataset_std = compute_dataset_stats(args.data_dir)
 
-    # ── Hardware-aware config (nothing hardcoded) ──
-    # Target: 16GB VRAM (Colab T4 or local 16GB GPU).
-    if args.colab:
-        s1_batch, s2_batch, num_workers = 96, 24, 2
-        accum_steps_s1, accum_steps_s2 = 1, 4    # Effective: 256, 256
-    else:
-        s1_batch, s2_batch, num_workers = 96, 12, 6
-        accum_steps_s1, accum_steps_s2 = 1, 4    # Effective: 96, 96
-
-    s1_img_size = 224
-    s2_img_size = 224
-    s1_epochs = 1 if args.dry_run else 8   # More epochs for solid feature extraction
-    s2_epochs = 1 if args.dry_run else 40   # Long fine-tuning with early stopping
-    patience = 999 if args.dry_run else 10  # Patient early stopping
+    # ── Runtime config ──
+    hardware = resolve_run_config(args, device)
+    s1_batch = hardware["s1_batch"]
+    s2_batch = hardware["s2_batch"]
+    num_workers = hardware["num_workers"]
+    accum_steps_s1 = hardware["accum_steps_s1"]
+    accum_steps_s2 = hardware["accum_steps_s2"]
+    s1_img_size = hardware["s1_img_size"]
+    s2_img_size = hardware["s2_img_size"]
+    s1_epochs = 1 if args.dry_run else 8
+    s2_epochs = 1 if args.dry_run else 30
+    patience_s1 = 999 if args.dry_run else 10
+    patience_s2 = 999 if args.dry_run else 5
     ens_beta = 0.999
-    focal_gamma = 2.0                       # Focal loss gamma
-    label_smoothing = 0.1
+    focal_gamma = 1.5
+    s1_label_smoothing = 0.05
+    s2_label_smoothing = 0.02
     weight_decay = 0.01
     grad_clip = 1.0
+    s1_mixup_prob = 0.4
+    s1_final_mixup_prob = 0.15
+    s2_mixup_prob = 0.3
+    s2_final_mixup_prob = 0.0
+    train_eval_max_samples = 4096 if args.dry_run else 6144
 
     print(f"\n  ⚙️  CONFIG (auto-configured)")
     print(f"  {'─' * 40}")
+    print(f"  Run type:      {hardware['run_type']}")
+    print(f"  Hardware:      {hardware['name']}")
+    print(f"  GPU:           {hardware['gpu_name']} ({hardware['vram_gb']:.1f} GB VRAM)")
+    print(f"  CPU / RAM:     {hardware['cpu_count']} cores, {hardware['system_ram_gb']:.1f} GB system RAM")
     print(f"  NUM_CLASSES:    {num_classes} (auto-detected)")
     print(f"  Stage 1:        {s1_epochs} ep, {s1_img_size}px, batch {s1_batch}×{accum_steps_s1} = {s1_batch*accum_steps_s1} effective")
     print(f"  Stage 2:        {s2_epochs} ep, {s2_img_size}px, batch {s2_batch}×{accum_steps_s2} = {s2_batch*accum_steps_s2} effective")
-    print(f"  Loss:           FocalLoss (γ={focal_gamma}) + ENS weights + label_smoothing={label_smoothing}")
-    print(f"  Augmentation S1: Mixup(α=0.4) + CutMix(α=1.0) @ 50% of batches (gentler for frozen backbone)")
-    print(f"  Augmentation S2: Mixup(α=0.4) + CutMix(α=1.0) @ 80% of batches")
+    print(f"  Loss S1:        FocalLoss (γ={focal_gamma}) + ENS weights + label_smoothing={s1_label_smoothing}")
+    print(f"  Loss S2:        Weighted CrossEntropy + label_smoothing={s2_label_smoothing}")
+    print(f"  Augmentation S1: Weighted sampler + Mixup/CutMix @ {int(s1_mixup_prob * 100)}% -> {int(s1_final_mixup_prob * 100)}% of batches")
+    print(f"  Augmentation S2: Shuffle loader + lighter aug + Mixup-only @ {int(s2_mixup_prob * 100)}% -> {int(s2_final_mixup_prob * 100)}% of batches")
     print(f"  Weight decay:   {weight_decay} (excluded on BN/bias)")
     print(f"  Grad clip:      {grad_clip}")
-    print(f"  Patience:       {patience} epochs")
+    print(f"  Patience:       Stage 1 = {patience_s1}, Stage 2 = {patience_s2}")
+    print(f"  Clean-train eval subset: {train_eval_max_samples:,} images")
     print(f"  Workers:        {num_workers}")
     print(f"  Dataset mean:   [{dataset_mean[0]:.4f}, {dataset_mean[1]:.4f}, {dataset_mean[2]:.4f}]")
     print(f"  Dataset std:    [{dataset_std[0]:.4f}, {dataset_std[1]:.4f}, {dataset_std[2]:.4f}]")
@@ -1318,7 +1645,8 @@ def main():
                             "s1_img_size": s1_img_size, "s2_img_size": s2_img_size,
                             "s1_batch": s1_batch, "s2_batch": s2_batch,
                             "s1_best_acc": best_acc_s1,
-                            "label_smoothing": label_smoothing,
+                            "s1_label_smoothing": s1_label_smoothing,
+                            "s2_label_smoothing": s2_label_smoothing,
                             "weight_decay": weight_decay,
                             "dataset_mean": dataset_mean, "dataset_std": dataset_std,
                             "resumed": True,
@@ -1337,10 +1665,21 @@ def main():
         print("  📌 STAGE 1: Feature Extraction (backbone frozen)")
         print("═" * 60)
 
+        stage1_train_transform = get_train_transforms(
+            s1_img_size,
+            dataset_mean,
+            dataset_std,
+        )
         dataloaders, sizes, train_dataset = create_dataloaders(
             args.data_dir, s1_img_size, s1_batch, dataset_mean, dataset_std, num_workers,
+            train_transform=stage1_train_transform, use_weighted_sampler=True,
+        )
+        train_eval_loader, train_eval_size = create_train_eval_loader(
+            args.data_dir, s1_img_size, dataset_mean, dataset_std, s1_batch, num_workers,
+            max_samples=train_eval_max_samples,
         )
         print(f"  Train: {sizes['train']:,}  Val: {sizes['val']:,}")
+        print(f"  Clean train eval subset: {train_eval_size:,}")
 
         # Augmented samples visualization
         plot_augmented_samples(train_dataset, class_names, dirs["images"] / "augmented_samples_stage1.png")
@@ -1353,7 +1692,11 @@ def main():
         model = try_compile(model)
 
         # Loss — Focal Loss (better than CE for imbalanced data)
-        criterion = FocalLoss(weight=class_weights, gamma=focal_gamma, label_smoothing=label_smoothing)
+        criterion = FocalLoss(
+            weight=class_weights,
+            gamma=focal_gamma,
+            label_smoothing=s1_label_smoothing,
+        )
 
         # ── LR Finder for Stage 1 ──
         suggested_lr_s1 = run_lr_finder(
@@ -1385,7 +1728,8 @@ def main():
                         "s1_img_size": s1_img_size, "s2_img_size": s2_img_size,
                         "s1_batch": s1_batch, "s2_batch": s2_batch,
                         "s1_lr": suggested_lr_s1,
-                        "label_smoothing": label_smoothing,
+                        "s1_label_smoothing": s1_label_smoothing,
+                        "s2_label_smoothing": s2_label_smoothing,
                         "weight_decay": weight_decay,
                         "dataset_mean": dataset_mean, "dataset_std": dataset_std,
                     },
@@ -1394,12 +1738,15 @@ def main():
             except Exception as e:
                 print(f"  W&B init failed: {e}")
 
-        # Train Stage 1 (Mixup 50%, per-batch scheduler)
+        # Train Stage 1 with stronger balancing and per-batch cosine restarts.
         model, hist_s1, best_acc_s1 = train_stage(
             model, dataloaders, sizes, criterion, optimizer, scheduler,
-            device, dirs, "Stage1_FeatureExtraction", s1_epochs, patience, grad_clip,
-            accum_steps=accum_steps_s1, use_mixup=True, mixup_prob=0.5,
+            device, dirs, "Stage1_FeatureExtraction", s1_epochs, patience_s1, grad_clip,
+            accum_steps=accum_steps_s1, use_mixup=True, mixup_prob=s1_mixup_prob,
+            final_mixup_prob=s1_final_mixup_prob,
+            use_cutmix=True,
             step_scheduler_per_batch=True, wandb_run=wandb_run,
+            train_eval_loader=train_eval_loader,
         )
         print(f"\n  ✅ Stage 1 done — Best Val Acc: {best_acc_s1:.4f}")
 
@@ -1420,10 +1767,29 @@ def main():
     gc.collect()
 
     # Higher resolution dataloaders
+    stage2_train_transform = get_train_transforms(
+        s2_img_size,
+        dataset_mean,
+        dataset_std,
+        crop_scale=(0.8, 1.0),
+        vertical_flip_p=0.2,
+        rotation_degrees=10,
+        translate=(0.05, 0.05),
+        shear=5,
+        randaugment_magnitude=5,
+        color_jitter_strength=0.2,
+        random_erasing_p=0.05,
+    )
     dataloaders, sizes, train_dataset = create_dataloaders(
         args.data_dir, s2_img_size, s2_batch, dataset_mean, dataset_std, num_workers,
+        train_transform=stage2_train_transform, use_weighted_sampler=False,
+    )
+    train_eval_loader, train_eval_size = create_train_eval_loader(
+        args.data_dir, s2_img_size, dataset_mean, dataset_std, s2_batch, num_workers,
+        max_samples=train_eval_max_samples,
     )
     print(f"  Image size: {s2_img_size}×{s2_img_size}, Batch: {s2_batch}")
+    print(f"  Clean train eval subset: {train_eval_size:,}")
 
     # Augmented samples at new resolution
     plot_augmented_samples(train_dataset, class_names, dirs["images"] / "augmented_samples_stage2.png")
@@ -1431,9 +1797,9 @@ def main():
     # Unfreeze
     unfreeze_backbone(model)
 
-    # New class weights + Focal Loss
+    # Stage 2 uses class-weighted CE without oversampling to avoid double-counting imbalance.
     class_weights = compute_ens_class_weights(train_dataset, ens_beta, num_classes, device)
-    criterion = FocalLoss(weight=class_weights, gamma=focal_gamma, label_smoothing=label_smoothing)
+    criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=s2_label_smoothing)
 
     # ── LR Finder for Stage 2 (discriminative LR) ──
     suggested_lr_s2 = run_lr_finder(
@@ -1442,9 +1808,9 @@ def main():
         num_iter=min(200, len(dataloaders["train"])),
     )
 
-    # Discriminative LR: backbone at 1/10th
+    # Discriminative LR: keep the backbone more conservative during full fine-tuning.
     lr_head = suggested_lr_s2
-    lr_backbone = suggested_lr_s2 / 10
+    lr_backbone = suggested_lr_s2 / 20
     print(f"  Discriminative LR — Head: {lr_head:.2e}, Backbone: {lr_backbone:.2e}")
 
     # Discriminative LR + no weight decay on BN/bias
@@ -1470,12 +1836,15 @@ def main():
     if wandb_run and WANDB_AVAILABLE:
         wandb.config.update({"s2_lr_head": lr_head, "s2_lr_backbone": lr_backbone})
 
-    # Train Stage 2 (Mixup 80%, per-EPOCH scheduler — critical difference)
+    # Train Stage 2 with lighter augmentation and per-epoch scheduling.
     model, hist_s2, best_acc_s2 = train_stage(
         model, dataloaders, sizes, criterion, optimizer, scheduler,
-        device, dirs, "Stage2_FineTuning", s2_epochs, patience, grad_clip,
-        accum_steps=accum_steps_s2, use_mixup=True, mixup_prob=0.8,
-        step_scheduler_per_batch=False, wandb_run=wandb_run,  # per-EPOCH for CosineAnnealingLR
+        device, dirs, "Stage2_FineTuning", s2_epochs, patience_s2, grad_clip,
+        accum_steps=accum_steps_s2, use_mixup=True, mixup_prob=s2_mixup_prob,
+        final_mixup_prob=s2_final_mixup_prob,
+        use_cutmix=False,
+        step_scheduler_per_batch=False, wandb_run=wandb_run,
+        train_eval_loader=train_eval_loader,
     )
     print(f"\n  ✅ Stage 2 done — Best Val Acc: {best_acc_s2:.4f}")
 
