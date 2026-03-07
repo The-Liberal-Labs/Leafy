@@ -1,0 +1,330 @@
+
+  📊 DATASET ANALYSIS
+  ────────────────────────────────────────
+  Classes:      107 (auto-detected)
+  Train images: 113,111
+  Val images:   14,079
+  Test images:  14,247
+  Total:        141,437
+
+  Class size distribution (train):
+    Min:       61  (Lemon__diseased)
+    Max:    10526  (Cassava___mosaic_disease)
+    Mean:      1057
+    Median:     761
+    Ratio (max/min): 173x imbalance
+
+  ⚠️  Bottom 10 classes (most at risk):
+       61 images — Lemon__diseased
+       61 images — Soybean__powdery_mildew
+       77 images — Wheat__septoria
+       80 images — Chili__healthy
+       80 images — Chili__leaf curl
+       80 images — Chili__leaf spot
+       80 images — Chili__whitefly
+       80 images — Chili__yellowish
+       80 images — Sugarcane__bacterial_blight
+      113 images — Gauva__diseased
+
+  ✅ Top 10 classes:
+     2136 images — Grape___black_measles
+     2571 images — Tomato__yellow_leaf_curl_virus
+     2647 images — Soybean__caterpillar
+     3962 images — Rose___rust
+     3982 images — Rose___healthy
+     3983 images — Rose___slug_sawfly
+     4285 images — Tomato___leaf_curl
+     4405 images — Orange___citrus_greening
+     4798 images — Soybean__healthy
+    10526 images — Cassava___mosaic_disease
+  📊 Class distribution plot saved: EfficientNetV2S/images/class_distribution.png
+  Computing dataset mean & std (sampling images)...
+  Dataset mean: [0.4596, 0.5065, 0.3826]
+  Dataset std:  [0.2279, 0.2137, 0.2491]
+
+  ⚙️  CONFIG (auto-configured)
+  ────────────────────────────────────────
+  Run type:      auto
+  Hardware:      t4_16gb
+  GPU:           Tesla T4 (15.6 GB VRAM)
+  CPU / RAM:     12 cores, 12.5 GB system RAM
+  NUM_CLASSES:    107 (auto-detected)
+  Stage 1:        8 ep, 224px, batch 192×1 = 192 effective
+  Stage 2:        30 ep, 260px, batch 48×2 = 96 effective
+  Loss S1:        FocalLoss (γ=1.5) + ENS weights + label_smoothing=0.05
+  Loss S2:        Weighted CrossEntropy + label_smoothing=0.02
+  Augmentation S1: Weighted sampler + Mixup/CutMix @ 40% -> 15% of batches
+  Augmentation S2: Shuffle loader + lighter aug + Mixup-only @ 30% -> 0% of batches
+  Weight decay:   0.01 (excluded on BN/bias)
+  Grad clip:      1.0
+  Patience:       Stage 1 = 10, Stage 2 = 5
+  Clean-train eval subset: 6,144 images
+  Workers:        4
+  Dataset mean:   [0.4596, 0.5065, 0.3826]
+  Dataset std:    [0.2279, 0.2137, 0.2491]
+
+════════════════════════════════════════════════════════════
+  📌 STAGE 1: Feature Extraction (backbone frozen)
+════════════════════════════════════════════════════════════
+  Train: 113,110  Val: 14,079
+  Clean train eval subset: 6,144
+  🖼️  Augmented samples saved: EfficientNetV2S/images/augmented_samples_stage1.png
+
+  Loading EfficientNet-V2-S (ImageNet pretrained)...
+  Memory format: channels_last
+  Params: 1,322,603 trainable / 21,500,091 total (6.2%)
+  ⚡ Model compiled with torch.compile()
+
+  🔍 Running LR Finder (200 iterations, LR: 1e-07 → 1e+01)...
+Stopping early, the loss has diverged
+Learning rate search finished. See the graph with {finder_name}.plot()
+  📊 LR Finder plot saved: EfficientNetV2S/images/lr_finder_stage1.png
+  ✅ Suggested LR: 1.38e-03
+  Weight decay groups: 5 with decay, 5 without
+
+════════════════════════════════════════════════════════════
+  🏋️ Stage1_FeatureExtraction: 8 epochs (patience=10)
+    Scheduler: per-batch
+    Label mixing: Mixup+CutMix (prob=0.40 -> 0.15)
+    Train accuracy uses soft labels; clean-train eval uses deterministic transforms
+════════════════════════════════════════════════════════════
+  Ep 01/8 │ TrLoss 1.4876  TrAcc 0.4547 │  ClLoss 0.3885  ClAcc 0.6257 │ VaLoss 0.3965  VaAcc 0.6253 │ LR 6.98e-04 │ GPU 0.1/3.4GB │ 2613s
+            ✅ Best model saved! Val Acc: 0.6253
+  Ep 02/8 │ TrLoss 1.1762  TrAcc 0.5600 │  ClLoss 0.3536  ClAcc 0.6475 │ VaLoss 0.3645  VaAcc 0.6480 │ LR 1.38e-03 │ GPU 0.2/3.4GB │ 2494s
+            ✅ Best model saved! Val Acc: 0.6480
+  Ep 03/8 │ TrLoss 1.1223  TrAcc 0.5728 │  ClLoss 0.3441  ClAcc 0.6733 │ VaLoss 0.3526  VaAcc 0.6687 │ LR 6.98e-04 │ GPU 0.2/3.4GB │ 2493s
+            ✅ Best model saved! Val Acc: 0.6687
+  Ep 04/8 │ TrLoss 0.9941  TrAcc 0.6152 │  ClLoss 0.3211  ClAcc 0.6880 │ VaLoss 0.3303  VaAcc 0.6878 │ LR 1.38e-03 │ GPU 0.2/3.4GB │ 2473s
+            ✅ Best model saved! Val Acc: 0.6878
+  Ep 05/8 │ TrLoss 0.9673  TrAcc 0.6203 │  ClLoss 0.3231  ClAcc 0.6857 │ VaLoss 0.3320  VaAcc 0.6861 │ LR 6.98e-04 │ GPU 0.2/3.4GB │ 2527s
+  Ep 06/8 │ TrLoss 0.8435  TrAcc 0.6583 │  ClLoss 0.2979  ClAcc 0.7104 │ VaLoss 0.3081  VaAcc 0.7096 │ LR 1.38e-03 │ GPU 0.2/3.4GB │ 2531s
+            ✅ Best model saved! Val Acc: 0.7096
+  Ep 07/8 │ TrLoss 0.8838  TrAcc 0.6419 │  ClLoss 0.3181  ClAcc 0.6942 │ VaLoss 0.3295  VaAcc 0.6866 │ LR 6.98e-04 │ GPU 0.2/3.4GB │ 2485s
+  Ep 08/8 │ TrLoss 0.7764  TrAcc 0.6760 │  ClLoss 0.2879  ClAcc 0.7212 │ VaLoss 0.2999  VaAcc 0.7128 │ LR 1.38e-03 │ GPU 0.2/3.4GB │ 2568s
+            ✅ Best model saved! Val Acc: 0.7128
+  Best weights restored (Val Acc: 0.7128)
+
+  ✅ Stage 1 done — Best Val Acc: 0.7128
+
+════════════════════════════════════════════════════════════
+  🔓 STAGE 2: Fine-Tuning (all layers unfrozen)
+════════════════════════════════════════════════════════════
+  Image size: 260×260, Batch: 48
+  Clean train eval subset: 6,144
+  🖼️  Augmented samples saved: EfficientNetV2S/images/augmented_samples_stage2.png
+  🔓 Backbone unfrozen: 21,500,091 / 21,500,091 params trainable (100.0%)
+
+  🔍 Running LR Finder (200 iterations, LR: 1e-07 → 1e+01)...
+Stopping early, the loss has diverged
+Learning rate search finished. See the graph with {finder_name}.plot()
+  📊 LR Finder plot saved: EfficientNetV2S/images/lr_finder_stage2.png
+  ✅ Suggested LR: 2.61e-04
+  Discriminative LR — Head: 2.61e-04, Backbone: 1.31e-05
+  Param groups: backbone(280+170), head(5+5)
+  Scheduler: LinearWarmup(2ep) → CosineAnnealing(28ep)
+
+════════════════════════════════════════════════════════════
+  🏋️ Stage2_FineTuning: 30 epochs (patience=5)
+    Scheduler: per-epoch
+    Label mixing: Mixup-only (prob=0.30 -> 0.00)
+    Train accuracy uses soft labels; clean-train eval uses deterministic transforms
+════════════════════════════════════════════════════════════
+  Ep 01/30 │ TrLoss 1.2274  TrAcc 0.7471 │  ClLoss 0.9101  ClAcc 0.8493 │ VaLoss 0.9363  VaAcc 0.8518 │ LR 2.61e-05 │ GPU 0.3/12.1GB │ 1637s
+            ✅ Best model saved! Val Acc: 0.8518
+  Ep 02/30 │ TrLoss 1.0352  TrAcc 0.8143 │  ClLoss 0.7470  ClAcc 0.8947 │ VaLoss 0.7757  VaAcc 0.8963 │ LR 1.44e-04 │ GPU 0.4/12.1GB │ 1129s
+            ✅ Best model saved! Val Acc: 0.8963
+  Ep 03/30 │ TrLoss 0.9119  TrAcc 0.8452 │  ClLoss 0.6783  ClAcc 0.9146 │ VaLoss 0.7135  VaAcc 0.9062 │ LR 2.61e-04 │ GPU 0.4/12.1GB │ 1124s
+            ✅ Best model saved! Val Acc: 0.9062
+  Ep 04/30 │ TrLoss 0.8150  TrAcc 0.8695 │  ClLoss 0.6511  ClAcc 0.9180 │ VaLoss 0.6831  VaAcc 0.9116 │ LR 2.60e-04 │ GPU 0.4/12.1GB │ 1131s
+            ✅ Best model saved! Val Acc: 0.9116
+  Ep 05/30 │ TrLoss 0.7778  TrAcc 0.8781 │  ClLoss 0.6319  ClAcc 0.9251 │ VaLoss 0.6613  VaAcc 0.9217 │ LR 2.58e-04 │ GPU 0.4/12.1GB │ 1129s
+            ✅ Best model saved! Val Acc: 0.9217
+  Ep 06/30 │ TrLoss 0.7453  TrAcc 0.8857 │  ClLoss 0.6121  ClAcc 0.9302 │ VaLoss 0.6494  VaAcc 0.9221 │ LR 2.54e-04 │ GPU 0.4/12.1GB │ 1132s
+            ✅ Best model saved! Val Acc: 0.9221
+  Ep 07/30 │ TrLoss 0.7110  TrAcc 0.8915 │  ClLoss 0.6020  ClAcc 0.9305 │ VaLoss 0.6384  VaAcc 0.9240 │ LR 2.48e-04 │ GPU 0.4/12.1GB │ 1128s
+            ✅ Best model saved! Val Acc: 0.9240
+  Ep 08/30 │ TrLoss 0.6911  TrAcc 0.8971 │  ClLoss 0.5916  ClAcc 0.9312 │ VaLoss 0.6368  VaAcc 0.9273 │ LR 2.41e-04 │ GPU 0.4/12.1GB │ 1119s
+            ✅ Best model saved! Val Acc: 0.9273
+  Ep 09/30 │ TrLoss 0.6635  TrAcc 0.9028 │  ClLoss 0.5872  ClAcc 0.9346 │ VaLoss 0.6318  VaAcc 0.9262 │ LR 2.33e-04 │ GPU 0.4/12.1GB │ 1122s
+  Ep 10/30 │ TrLoss 0.6564  TrAcc 0.9053 │  ClLoss 0.5816  ClAcc 0.9333 │ VaLoss 0.6336  VaAcc 0.9266 │ LR 2.23e-04 │ GPU 0.4/12.1GB │ 1124s
+  Ep 11/30 │ TrLoss 0.6419  TrAcc 0.9077 │  ClLoss 0.5769  ClAcc 0.9349 │ VaLoss 0.6276  VaAcc 0.9276 │ LR 2.12e-04 │ GPU 0.4/12.1GB │ 1138s
+            ✅ Best model saved! Val Acc: 0.9276
+  Ep 12/30 │ TrLoss 0.6249  TrAcc 0.9119 │  ClLoss 0.5716  ClAcc 0.9373 │ VaLoss 0.6249  VaAcc 0.9280 │ LR 2.00e-04 │ GPU 0.4/12.1GB │ 1136s
+            ✅ Best model saved! Val Acc: 0.9280
+  Ep 13/30 │ TrLoss 0.6158  TrAcc 0.9139 │  ClLoss 0.5707  ClAcc 0.9378 │ VaLoss 0.6237  VaAcc 0.9273 │ LR 1.87e-04 │ GPU 0.4/12.1GB │ 1126s
+  Ep 14/30 │ TrLoss 0.6075  TrAcc 0.9155 │  ClLoss 0.5661  ClAcc 0.9370 │ VaLoss 0.6251  VaAcc 0.9281 │ LR 1.74e-04 │ GPU 0.4/12.1GB │ 1131s
+            ✅ Best model saved! Val Acc: 0.9281
+  Ep 15/30 │ TrLoss 0.5948  TrAcc 0.9178 │  ClLoss 0.5627  ClAcc 0.9398 │ VaLoss 0.6207  VaAcc 0.9295 │ LR 1.60e-04 │ GPU 0.4/12.1GB │ 1122s
+            ✅ Best model saved! Val Acc: 0.9295
+  Ep 16/30 │ TrLoss 0.5845  TrAcc 0.9209 │  ClLoss 0.5567  ClAcc 0.9398 │ VaLoss 0.6199  VaAcc 0.9288 │ LR 1.45e-04 │ GPU 0.4/12.1GB │ 1127s
+  Ep 17/30 │ TrLoss 0.5746  TrAcc 0.9224 │  ClLoss 0.5524  ClAcc 0.9416 │ VaLoss 0.6213  VaAcc 0.9280 │ LR 1.31e-04 │ GPU 0.4/12.1GB │ 1118s
+  Ep 18/30 │ TrLoss 0.5725  TrAcc 0.9232 │  ClLoss 0.5539  ClAcc 0.9427 │ VaLoss 0.6234  VaAcc 0.9282 │ LR 1.16e-04 │ GPU 0.4/12.1GB │ 1134s
+  Ep 19/30 │ TrLoss 0.5531  TrAcc 0.9269 │  ClLoss 0.5478  ClAcc 0.9451 │ VaLoss 0.6195  VaAcc 0.9305 │ LR 1.02e-04 │ GPU 0.4/12.1GB │ 1136s
+            ✅ Best model saved! Val Acc: 0.9305
+  Ep 20/30 │ TrLoss 0.5548  TrAcc 0.9271 │  ClLoss 0.5496  ClAcc 0.9442 │ VaLoss 0.6202  VaAcc 0.9273 │ LR 8.76e-05 │ GPU 0.4/12.1GB │ 1123s
+  Ep 21/30 │ TrLoss 0.5395  TrAcc 0.9308 │  ClLoss 0.5437  ClAcc 0.9460 │ VaLoss 0.6185  VaAcc 0.9294 │ LR 7.40e-05 │ GPU 0.4/12.1GB │ 1126s
+  Ep 22/30 │ TrLoss 0.5321  TrAcc 0.9324 │  ClLoss 0.5424  ClAcc 0.9460 │ VaLoss 0.6186  VaAcc 0.9296 │ LR 6.12e-05 │ GPU 0.4/12.1GB │ 1129s
+  Ep 23/30 │ TrLoss 0.5249  TrAcc 0.9343 │  ClLoss 0.5425  ClAcc 0.9466 │ VaLoss 0.6199  VaAcc 0.9273 │ LR 4.93e-05 │ GPU 0.4/12.1GB │ 1128s
+  Ep 24/30 │ TrLoss 0.5250  TrAcc 0.9342 │  ClLoss 0.5401  ClAcc 0.9463 │ VaLoss 0.6200  VaAcc 0.9293 │ LR 3.83e-05 │ GPU 0.4/12.1GB │ 1133s
+  ⛔ Early stopping at epoch 24 (no improvement for 5 epochs)
+  Best weights restored (Val Acc: 0.9305)
+
+  ✅ Stage 2 done — Best Val Acc: 0.9305
+  📊 Training history saved: EfficientNetV2S/images/training_history.png
+
+════════════════════════════════════════════════════════════
+  🧪 FINAL EVALUATION ON TEST SET
+════════════════════════════════════════════════════════════
+  Test samples: 14,247
+
+  📋 Classification Report:
+                                precision    recall  f1-score   support
+
+  Apple___alternaria_leaf_spot     1.0000    1.0000    1.0000        29
+             Apple___black_rot     1.0000    1.0000    1.0000        63
+            Apple___brown_spot     1.0000    0.9545    0.9767        22
+             Apple___gray_spot     0.9302    1.0000    0.9639        40
+               Apple___healthy     0.9922    0.9845    0.9883       258
+                  Apple___rust     1.0000    0.9760    0.9879       125
+                  Apple___scab     0.9919    0.9919    0.9919       123
+  Bell_pepper___bacterial_spot     0.4949    0.9703    0.6555       101
+         Bell_pepper___healthy     0.1111    0.0134    0.0240       149
+           Blueberry___healthy     1.0000    1.0000    1.0000       151
+    Cassava___bacterial_blight     0.6792    0.6545    0.6667       110
+Cassava___brown_streak_disease     0.7751    0.7364    0.7552       220
+        Cassava___green_mottle     0.7783    0.7167    0.7462       240
+             Cassava___healthy     0.6631    0.7143    0.6877       259
+      Cassava___mosaic_disease     0.9472    0.9544    0.9508      1317
+              Cherry___healthy     1.0000    1.0000    1.0000        86
+       Cherry___powdery_mildew     1.0000    1.0000    1.0000       106
+                Chili__healthy     0.7000    0.6364    0.6667        11
+              Chili__leaf curl     0.7273    0.7273    0.7273        11
+              Chili__leaf spot     0.6111    1.0000    0.7586        11
+               Chili__whitefly     0.7857    1.0000    0.8800        11
+              Chili__yellowish     0.6923    0.8182    0.7500        11
+              Coffee___healthy     0.9390    0.9625    0.9506        80
+      Coffee___red_spider_mite     0.8182    0.5000    0.6207        18
+                 Coffee___rust     0.8361    0.8361    0.8361        61
+            Corn___common_rust     1.0000    1.0000    1.0000       120
+                Corn___healthy     1.0000    1.0000    1.0000       117
+   Corn___northern_leaf_blight     0.9897    0.9697    0.9796        99
+          Corn__gray_leaf_spot     0.9732    0.9909    0.9820       110
+            Cucumber__diseased     1.0000    1.0000    1.0000        36
+             Cucumber__healthy     1.0000    1.0000    1.0000        35
+               Gauva__diseased     1.0000    1.0000    1.0000        15
+                Gauva__healthy     1.0000    1.0000    1.0000        29
+           Grape___Leaf_blight     1.0000    1.0000    1.0000       149
+         Grape___black_measles     1.0000    0.9963    0.9981       268
+             Grape___black_rot     1.0000    1.0000    1.0000       159
+               Grape___healthy     0.9942    1.0000    0.9971       171
+               Jamun__diseased     0.9706    0.9429    0.9565        35
+                Jamun__healthy     0.9333    0.9655    0.9492        29
+               Lemon__diseased     1.0000    0.7778    0.8750         9
+                Lemon__healthy     0.8947    1.0000    0.9444        17
+               Mango__diseased     1.0000    1.0000    1.0000        27
+                Mango__healthy     1.0000    1.0000    1.0000        18
+      Orange___citrus_greening     1.0000    1.0000    1.0000       552
+        Peach___bacterial_spot     1.0000    1.0000    1.0000       231
+               Peach___healthy     1.0000    1.0000    1.0000        37
+   Pepper_bell__bacterial_spot     0.5455    0.0556    0.1008       108
+          Pepper_bell__healthy     0.4772    0.8774    0.6182       155
+         Pomegranate__diseased     1.0000    1.0000    1.0000        28
+          Pomegranate__healthy     1.0000    1.0000    1.0000        30
+       Potato___bacterial_wilt     1.0000    1.0000    1.0000        58
+         Potato___early_blight     0.9925    1.0000    0.9962       264
+              Potato___healthy     0.9955    0.9781    0.9867       228
+          Potato___late_blight     0.9953    1.0000    0.9976       210
+       Potato___leafroll_virus     1.0000    0.9630    0.9811        54
+         Potato___mosaic_virus     0.9577    1.0000    0.9784        68
+                Potato___pests     0.9683    0.9839    0.9760        62
+         Potato___phytophthora     0.9730    1.0000    0.9863        36
+           Raspberry___healthy     1.0000    1.0000    1.0000        38
+       Rice___bacterial_blight     1.0000    1.0000    1.0000       159
+                  Rice___blast     1.0000    1.0000    1.0000       145
+             Rice___brown_spot     1.0000    1.0000    1.0000       161
+                 Rice___tungro     0.9925    1.0000    0.9962       132
+                 Rice__healthy     0.9728    0.9533    0.9630       150
+                   Rice__hispa     1.0000    1.0000    1.0000        57
+              Rice__leaf_blast     0.9314    0.9596    0.9453        99
+              Rice__neck_blast     1.0000    1.0000    1.0000       101
+                Rose___healthy     1.0000    1.0000    1.0000       499
+                   Rose___rust     1.0000    1.0000    1.0000       496
+            Rose___slug_sawfly     1.0000    1.0000    1.0000       499
+          Soybean__caterpillar     0.9731    0.9789    0.9760       332
+  Soybean__diabrotica_speciosa     0.9771    0.9638    0.9704       221
+              Soybean__healthy     0.9934    0.9967    0.9950       601
+       Soybean__powdery_mildew     1.0000    0.8889    0.9412         9
+       Squash___powdery_mildew     1.0000    1.0000    1.0000       184
+          Strawberry___healthy     1.0000    1.0000    1.0000        47
+      Strawberry___leaf_scorch     1.0000    1.0000    1.0000       112
+   Sugarcane__bacterial_blight     1.0000    1.0000    1.0000        11
+           Sugercane___healthy     1.0000    0.9811    0.9905        53
+            Sugercane___mosaic     0.9592    1.0000    0.9792        47
+           Sugercane___red_rot     0.9811    0.9811    0.9811        53
+              Sugercane___rust     0.9808    0.9808    0.9808        52
+       Sugercane___yellow_leaf     0.9796    0.9412    0.9600        51
+               Tea__algal_leaf     1.0000    1.0000    1.0000        35
+              Tea__anthracnose     1.0000    1.0000    1.0000        31
+            Tea__bird_eye_spot     1.0000    1.0000    1.0000        31
+             Tea__brown_blight     1.0000    1.0000    1.0000        35
+                  Tea__healthy     1.0000    1.0000    1.0000        22
+       Tomato___bacterial_spot     1.0000    1.0000    1.0000       214
+         Tomato___early_blight     1.0000    0.9901    0.9950       101
+              Tomato___healthy     1.0000    1.0000    1.0000       160
+          Tomato___late_blight     0.9948    1.0000    0.9974       192
+            Tomato___leaf_curl     0.6251    1.0000    0.7693       537
+            Tomato___leaf_mold     1.0000    1.0000    1.0000        96
+         Tomato___mosaic_virus     1.0000    1.0000    1.0000        38
+   Tomato___septoria_leaf_spot     1.0000    1.0000    1.0000       178
+         Tomato___spider_mites     1.0000    1.0000    1.0000       169
+          Tomato___target_spot     1.0000    1.0000    1.0000       141
+Tomato__yellow_leaf_curl_virus     0.0000    0.0000    0.0000       322
+      Watermelon___anthracnose     1.0000    1.0000    1.0000        16
+     Watermelon___downy_mildew     1.0000    1.0000    1.0000        39
+          Watermelon___healthy     1.0000    1.0000    1.0000        21
+     Watermelon___mosaic_virus     1.0000    1.0000    1.0000        42
+             Wheat__brown_rust     1.0000    1.0000    1.0000        93
+                Wheat__healthy     1.0000    1.0000    1.0000       123
+               Wheat__septoria     1.0000    1.0000    1.0000        11
+            Wheat__yellow_rust     1.0000    1.0000    1.0000       114
+
+                      accuracy                         0.9309     14247
+                     macro avg     0.9299    0.9370    0.9283     14247
+                  weighted avg     0.9139    0.9309    0.9174     14247
+
+  Report saved: EfficientNetV2S/logs/classification_report.txt
+  📊 Confusion matrix saved: EfficientNetV2S/images/confusion_matrix.png
+  📊 Per-class metrics saved: EfficientNetV2S/images/per_class_metrics.png
+
+════════════════════════════════════════════════════════════
+  📦 EXPORTING MODEL
+════════════════════════════════════════════════════════════
+  💾 PTH saved: EfficientNetV2S/models/best_model.pth
+  ⚠️  ONNX export failed: No module named 'onnxscript'
+  💾 Class names saved: EfficientNetV2S/models/class_names.json
+  💾 Inference config saved: EfficientNetV2S/models/inference_config.json
+  W&B run finished & artifact uploaded.
+
+════════════════════════════════════════════════════════════
+  🌿 TRAINING COMPLETE!
+════════════════════════════════════════════════════════════
+  Classes:              107
+  Stage 1 Best Val Acc: 0.7128
+  Stage 2 Best Val Acc: 0.9305
+  Test Accuracy:        0.9308626377482979
+
+  📁 All outputs in: EfficientNetV2S/
+     models/best_model.pth         — PyTorch weights
+     models/model.onnx             — ONNX format
+     models/class_names.json       — Class mapping
+     models/inference_config.json   — Full inference config
+     images/lr_finder_stage1.png    — LR finder (Stage 1)
+     images/lr_finder_stage2.png    — LR finder (Stage 2)
+     images/training_history.png    — Acc/Loss/LR curves
+     images/confusion_matrix.png    — Per-class accuracy
+     images/per_class_metrics.png   — P/R/F1 per class
+     images/class_distribution.png  — Dataset distribution
+     images/augmented_samples_*.png — Augmentation preview
+     logs/training_log_*.csv        — Epoch-level logs
+     logs/classification_report.txt — Full test report
+════════════════════════════════════════════════════════════

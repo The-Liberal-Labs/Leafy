@@ -1,0 +1,13 @@
+Pillow
+tqdm
+matplotlib
+numpy
+pandas
+seaborn
+torch
+torchvision
+scikit-learn
+wandb
+torchsummary
+tensorboard
+torch-lr-finder

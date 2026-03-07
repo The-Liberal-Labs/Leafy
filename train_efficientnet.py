@@ -266,7 +266,7 @@ def get_hardware_profile(device, requested_profile="auto", colab=False):
         "t4_16gb": {
             "name": "t4_16gb",
             "s1_batch": 192,
-            "s2_batch": 40,
+            "s2_batch": 48,
             "accum_steps_s1": 1,
             "accum_steps_s2": 2,
             "s1_img_size": 224,

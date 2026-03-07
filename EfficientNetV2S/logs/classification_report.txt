@@ -1,0 +1,113 @@
+                                precision    recall  f1-score   support
+
+  Apple___alternaria_leaf_spot     1.0000    1.0000    1.0000        29
+             Apple___black_rot     1.0000    1.0000    1.0000        63
+            Apple___brown_spot     1.0000    0.9545    0.9767        22
+             Apple___gray_spot     0.9302    1.0000    0.9639        40
+               Apple___healthy     0.9922    0.9845    0.9883       258
+                  Apple___rust     1.0000    0.9760    0.9879       125
+                  Apple___scab     0.9919    0.9919    0.9919       123
+  Bell_pepper___bacterial_spot     0.4949    0.9703    0.6555       101
+         Bell_pepper___healthy     0.1111    0.0134    0.0240       149
+           Blueberry___healthy     1.0000    1.0000    1.0000       151
+    Cassava___bacterial_blight     0.6792    0.6545    0.6667       110
+Cassava___brown_streak_disease     0.7751    0.7364    0.7552       220
+        Cassava___green_mottle     0.7783    0.7167    0.7462       240
+             Cassava___healthy     0.6631    0.7143    0.6877       259
+      Cassava___mosaic_disease     0.9472    0.9544    0.9508      1317
+              Cherry___healthy     1.0000    1.0000    1.0000        86
+       Cherry___powdery_mildew     1.0000    1.0000    1.0000       106
+                Chili__healthy     0.7000    0.6364    0.6667        11
+              Chili__leaf curl     0.7273    0.7273    0.7273        11
+              Chili__leaf spot     0.6111    1.0000    0.7586        11
+               Chili__whitefly     0.7857    1.0000    0.8800        11
+              Chili__yellowish     0.6923    0.8182    0.7500        11
+              Coffee___healthy     0.9390    0.9625    0.9506        80
+      Coffee___red_spider_mite     0.8182    0.5000    0.6207        18
+                 Coffee___rust     0.8361    0.8361    0.8361        61
+            Corn___common_rust     1.0000    1.0000    1.0000       120
+                Corn___healthy     1.0000    1.0000    1.0000       117
+   Corn___northern_leaf_blight     0.9897    0.9697    0.9796        99
+          Corn__gray_leaf_spot     0.9732    0.9909    0.9820       110
+            Cucumber__diseased     1.0000    1.0000    1.0000        36
+             Cucumber__healthy     1.0000    1.0000    1.0000        35
+               Gauva__diseased     1.0000    1.0000    1.0000        15
+                Gauva__healthy     1.0000    1.0000    1.0000        29
+           Grape___Leaf_blight     1.0000    1.0000    1.0000       149
+         Grape___black_measles     1.0000    0.9963    0.9981       268
+             Grape___black_rot     1.0000    1.0000    1.0000       159
+               Grape___healthy     0.9942    1.0000    0.9971       171
+               Jamun__diseased     0.9706    0.9429    0.9565        35
+                Jamun__healthy     0.9333    0.9655    0.9492        29
+               Lemon__diseased     1.0000    0.7778    0.8750         9
+                Lemon__healthy     0.8947    1.0000    0.9444        17
+               Mango__diseased     1.0000    1.0000    1.0000        27
+                Mango__healthy     1.0000    1.0000    1.0000        18
+      Orange___citrus_greening     1.0000    1.0000    1.0000       552
+        Peach___bacterial_spot     1.0000    1.0000    1.0000       231
+               Peach___healthy     1.0000    1.0000    1.0000        37
+   Pepper_bell__bacterial_spot     0.5455    0.0556    0.1008       108
+          Pepper_bell__healthy     0.4772    0.8774    0.6182       155
+         Pomegranate__diseased     1.0000    1.0000    1.0000        28
+          Pomegranate__healthy     1.0000    1.0000    1.0000        30
+       Potato___bacterial_wilt     1.0000    1.0000    1.0000        58
+         Potato___early_blight     0.9925    1.0000    0.9962       264
+              Potato___healthy     0.9955    0.9781    0.9867       228
+          Potato___late_blight     0.9953    1.0000    0.9976       210
+       Potato___leafroll_virus     1.0000    0.9630    0.9811        54
+         Potato___mosaic_virus     0.9577    1.0000    0.9784        68
+                Potato___pests     0.9683    0.9839    0.9760        62
+         Potato___phytophthora     0.9730    1.0000    0.9863        36
+           Raspberry___healthy     1.0000    1.0000    1.0000        38
+       Rice___bacterial_blight     1.0000    1.0000    1.0000       159
+                  Rice___blast     1.0000    1.0000    1.0000       145
+             Rice___brown_spot     1.0000    1.0000    1.0000       161
+                 Rice___tungro     0.9925    1.0000    0.9962       132
+                 Rice__healthy     0.9728    0.9533    0.9630       150
+                   Rice__hispa     1.0000    1.0000    1.0000        57
+              Rice__leaf_blast     0.9314    0.9596    0.9453        99
+              Rice__neck_blast     1.0000    1.0000    1.0000       101
+                Rose___healthy     1.0000    1.0000    1.0000       499
+                   Rose___rust     1.0000    1.0000    1.0000       496
+            Rose___slug_sawfly     1.0000    1.0000    1.0000       499
+          Soybean__caterpillar     0.9731    0.9789    0.9760       332
+  Soybean__diabrotica_speciosa     0.9771    0.9638    0.9704       221
+              Soybean__healthy     0.9934    0.9967    0.9950       601
+       Soybean__powdery_mildew     1.0000    0.8889    0.9412         9
+       Squash___powdery_mildew     1.0000    1.0000    1.0000       184
+          Strawberry___healthy     1.0000    1.0000    1.0000        47
+      Strawberry___leaf_scorch     1.0000    1.0000    1.0000       112
+   Sugarcane__bacterial_blight     1.0000    1.0000    1.0000        11
+           Sugercane___healthy     1.0000    0.9811    0.9905        53
+            Sugercane___mosaic     0.9592    1.0000    0.9792        47
+           Sugercane___red_rot     0.9811    0.9811    0.9811        53
+              Sugercane___rust     0.9808    0.9808    0.9808        52
+       Sugercane___yellow_leaf     0.9796    0.9412    0.9600        51
+               Tea__algal_leaf     1.0000    1.0000    1.0000        35
+              Tea__anthracnose     1.0000    1.0000    1.0000        31
+            Tea__bird_eye_spot     1.0000    1.0000    1.0000        31
+             Tea__brown_blight     1.0000    1.0000    1.0000        35
+                  Tea__healthy     1.0000    1.0000    1.0000        22
+       Tomato___bacterial_spot     1.0000    1.0000    1.0000       214
+         Tomato___early_blight     1.0000    0.9901    0.9950       101
+              Tomato___healthy     1.0000    1.0000    1.0000       160
+          Tomato___late_blight     0.9948    1.0000    0.9974       192
+            Tomato___leaf_curl     0.6251    1.0000    0.7693       537
+            Tomato___leaf_mold     1.0000    1.0000    1.0000        96
+         Tomato___mosaic_virus     1.0000    1.0000    1.0000        38
+   Tomato___septoria_leaf_spot     1.0000    1.0000    1.0000       178
+         Tomato___spider_mites     1.0000    1.0000    1.0000       169
+          Tomato___target_spot     1.0000    1.0000    1.0000       141
+Tomato__yellow_leaf_curl_virus     0.0000    0.0000    0.0000       322
+      Watermelon___anthracnose     1.0000    1.0000    1.0000        16
+     Watermelon___downy_mildew     1.0000    1.0000    1.0000        39
+          Watermelon___healthy     1.0000    1.0000    1.0000        21
+     Watermelon___mosaic_virus     1.0000    1.0000    1.0000        42
+             Wheat__brown_rust     1.0000    1.0000    1.0000        93
+                Wheat__healthy     1.0000    1.0000    1.0000       123
+               Wheat__septoria     1.0000    1.0000    1.0000        11
+            Wheat__yellow_rust     1.0000    1.0000    1.0000       114
+
+                      accuracy                         0.9309     14247
+                     macro avg     0.9299    0.9370    0.9283     14247
+                  weighted avg     0.9139    0.9309    0.9174     14247
