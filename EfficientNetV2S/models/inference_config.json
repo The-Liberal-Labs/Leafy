@@ -1,16 +1,16 @@
 {
   "architecture": "efficientnet_v2_s",
-  "num_classes": 107,
-  "image_size": 260,
+  "num_classes": 103,
+  "image_size": 384,
   "mean": [
-    0.4595530846576301,
-    0.5064713004501499,
-    0.38259011115881864
+    0.4619392194942552,
+    0.5094395780135175,
+    0.3830234807578885
   ],
   "std": [
-    0.2278551145092649,
-    0.21365512381663102,
-    0.24907296057805225
+    0.22832113471885004,
+    0.2140125171196165,
+    0.24937351619422796
   ],
   "class_names": [
     "Apple___alternaria_leaf_spot",
@@ -20,8 +20,6 @@
     "Apple___healthy",
     "Apple___rust",
     "Apple___scab",
-    "Bell_pepper___bacterial_spot",
-    "Bell_pepper___healthy",
     "Blueberry___healthy",
     "Cassava___bacterial_blight",
     "Cassava___brown_streak_disease",
@@ -52,13 +50,14 @@
     "Grape___healthy",
     "Jamun__diseased",
     "Jamun__healthy",
-    "Lemon__diseased",
     "Lemon__healthy",
     "Mango__diseased",
     "Mango__healthy",
     "Orange___citrus_greening",
     "Peach___bacterial_spot",
     "Peach___healthy",
+    "Pepper_bell___bacterial_spot",
+    "Pepper_bell___healthy",
     "Pepper_bell__bacterial_spot",
     "Pepper_bell__healthy",
     "Pomegranate__diseased",
@@ -86,7 +85,6 @@
     "Soybean__caterpillar",
     "Soybean__diabrotica_speciosa",
     "Soybean__healthy",
-    "Soybean__powdery_mildew",
     "Squash___powdery_mildew",
     "Strawberry___healthy",
     "Strawberry___leaf_scorch",
@@ -111,14 +109,12 @@
     "Tomato___septoria_leaf_spot",
     "Tomato___spider_mites",
     "Tomato___target_spot",
-    "Tomato__yellow_leaf_curl_virus",
     "Watermelon___anthracnose",
     "Watermelon___downy_mildew",
     "Watermelon___healthy",
     "Watermelon___mosaic_virus",
     "Wheat__brown_rust",
     "Wheat__healthy",
-    "Wheat__septoria",
     "Wheat__yellow_rust"
   ]
 }

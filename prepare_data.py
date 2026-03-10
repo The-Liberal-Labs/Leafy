@@ -16,7 +16,7 @@ def parse_args():
     parser.add_argument(
         "--min-images-per-class",
         type=int,
-        default=0,
+        default=50,
         help="Skip classes with fewer than this many source images",
     )
     return parser.parse_args()

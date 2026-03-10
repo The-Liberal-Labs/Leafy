@@ -1,23 +1,20 @@
 
   📊 DATASET ANALYSIS
   ────────────────────────────────────────
-  Classes:      107 (auto-detected)
-  Train images: 113,111
-  Val images:   14,079
-  Test images:  14,247
-  Total:        141,437
+  Classes:      103 (auto-detected)
+  Train images: 112,912
+  Val images:   14,057
+  Test images:  14,217
+  Total:        141,186
 
   Class size distribution (train):
-    Min:       61  (Lemon__diseased)
+    Min:       80  (Chili__healthy)
     Max:    10526  (Cassava___mosaic_disease)
-    Mean:      1057
-    Median:     761
-    Ratio (max/min): 173x imbalance
+    Mean:      1096
+    Median:     784
+    Ratio (max/min): 132x imbalance
 
   ⚠️  Bottom 10 classes (most at risk):
-       61 images — Lemon__diseased
-       61 images — Soybean__powdery_mildew
-       77 images — Wheat__septoria
        80 images — Chili__healthy
        80 images — Chili__leaf curl
        80 images — Chili__leaf spot
@@ -25,22 +22,25 @@
        80 images — Chili__yellowish
        80 images — Sugarcane__bacterial_blight
       113 images — Gauva__diseased
+      124 images — Watermelon___anthracnose
+      127 images — Lemon__healthy
+      133 images — Coffee___red_spider_mite
 
   ✅ Top 10 classes:
+     2102 images — Potato___early_blight
      2136 images — Grape___black_measles
-     2571 images — Tomato__yellow_leaf_curl_virus
      2647 images — Soybean__caterpillar
      3962 images — Rose___rust
      3982 images — Rose___healthy
      3983 images — Rose___slug_sawfly
-     4285 images — Tomato___leaf_curl
      4405 images — Orange___citrus_greening
      4798 images — Soybean__healthy
+     6856 images — Tomato___leaf_curl
     10526 images — Cassava___mosaic_disease
   📊 Class distribution plot saved: EfficientNetV2S/images/class_distribution.png
   Computing dataset mean & std (sampling images)...
-  Dataset mean: [0.4596, 0.5065, 0.3826]
-  Dataset std:  [0.2279, 0.2137, 0.2491]
+  Dataset mean: [0.4619, 0.5094, 0.3830]
+  Dataset std:  [0.2283, 0.2140, 0.2494]
 
   ⚙️  CONFIG (auto-configured)
   ────────────────────────────────────────
@@ -48,39 +48,39 @@
   Hardware:      t4_16gb
   GPU:           Tesla T4 (15.6 GB VRAM)
   CPU / RAM:     12 cores, 12.5 GB system RAM
-  NUM_CLASSES:    107 (auto-detected)
+  NUM_CLASSES:    103 (auto-detected)
   Stage 1:        8 ep, 224px, batch 192×1 = 192 effective
-  Stage 2:        30 ep, 260px, batch 48×2 = 96 effective
+  Stage 2:        60 ep, 384px, batch 24×4 = 96 effective
   Loss S1:        FocalLoss (γ=1.5) + ENS weights + label_smoothing=0.05
-  Loss S2:        Weighted CrossEntropy + label_smoothing=0.02
+  Loss S2:        FocalLoss (γ=0.5) + ENS weights + label_smoothing=0.02
   Augmentation S1: Weighted sampler + Mixup/CutMix @ 40% -> 15% of batches
-  Augmentation S2: Shuffle loader + lighter aug + Mixup-only @ 30% -> 0% of batches
+  Augmentation S2: Weighted sampler + Mixup-only @ 15% -> 0% of batches
   Weight decay:   0.01 (excluded on BN/bias)
   Grad clip:      1.0
-  Patience:       Stage 1 = 10, Stage 2 = 5
+  Patience:       Stage 1 = 10, Stage 2 = 12
   Clean-train eval subset: 6,144 images
   Workers:        4
-  Dataset mean:   [0.4596, 0.5065, 0.3826]
-  Dataset std:    [0.2279, 0.2137, 0.2491]
+  Dataset mean:   [0.4619, 0.5094, 0.3830]
+  Dataset std:    [0.2283, 0.2140, 0.2494]
 
 ════════════════════════════════════════════════════════════
   📌 STAGE 1: Feature Extraction (backbone frozen)
 ════════════════════════════════════════════════════════════
-  Train: 113,110  Val: 14,079
+  Train: 112,911  Val: 14,057
   Clean train eval subset: 6,144
   🖼️  Augmented samples saved: EfficientNetV2S/images/augmented_samples_stage1.png
 
   Loading EfficientNet-V2-S (ImageNet pretrained)...
   Memory format: channels_last
-  Params: 1,322,603 trainable / 21,500,091 total (6.2%)
+  Params: 709,735 trainable / 20,887,223 total (3.4%)
   ⚡ Model compiled with torch.compile()
 
   🔍 Running LR Finder (200 iterations, LR: 1e-07 → 1e+01)...
 Stopping early, the loss has diverged
 Learning rate search finished. See the graph with {finder_name}.plot()
   📊 LR Finder plot saved: EfficientNetV2S/images/lr_finder_stage1.png
-  ✅ Suggested LR: 1.38e-03
-  Weight decay groups: 5 with decay, 5 without
+  ✅ Suggested LR: 2.41e-03
+  Weight decay groups: 3 with decay, 3 without
 
 ════════════════════════════════════════════════════════════
   🏋️ Stage1_FeatureExtraction: 8 epochs (patience=10)
@@ -88,209 +88,256 @@ Learning rate search finished. See the graph with {finder_name}.plot()
     Label mixing: Mixup+CutMix (prob=0.40 -> 0.15)
     Train accuracy uses soft labels; clean-train eval uses deterministic transforms
 ════════════════════════════════════════════════════════════
-  Ep 01/8 │ TrLoss 1.4876  TrAcc 0.4547 │  ClLoss 0.3885  ClAcc 0.6257 │ VaLoss 0.3965  VaAcc 0.6253 │ LR 6.98e-04 │ GPU 0.1/3.4GB │ 2613s
-            ✅ Best model saved! Val Acc: 0.6253
-  Ep 02/8 │ TrLoss 1.1762  TrAcc 0.5600 │  ClLoss 0.3536  ClAcc 0.6475 │ VaLoss 0.3645  VaAcc 0.6480 │ LR 1.38e-03 │ GPU 0.2/3.4GB │ 2494s
-            ✅ Best model saved! Val Acc: 0.6480
-  Ep 03/8 │ TrLoss 1.1223  TrAcc 0.5728 │  ClLoss 0.3441  ClAcc 0.6733 │ VaLoss 0.3526  VaAcc 0.6687 │ LR 6.98e-04 │ GPU 0.2/3.4GB │ 2493s
-            ✅ Best model saved! Val Acc: 0.6687
-  Ep 04/8 │ TrLoss 0.9941  TrAcc 0.6152 │  ClLoss 0.3211  ClAcc 0.6880 │ VaLoss 0.3303  VaAcc 0.6878 │ LR 1.38e-03 │ GPU 0.2/3.4GB │ 2473s
-            ✅ Best model saved! Val Acc: 0.6878
-  Ep 05/8 │ TrLoss 0.9673  TrAcc 0.6203 │  ClLoss 0.3231  ClAcc 0.6857 │ VaLoss 0.3320  VaAcc 0.6861 │ LR 6.98e-04 │ GPU 0.2/3.4GB │ 2527s
-  Ep 06/8 │ TrLoss 0.8435  TrAcc 0.6583 │  ClLoss 0.2979  ClAcc 0.7104 │ VaLoss 0.3081  VaAcc 0.7096 │ LR 1.38e-03 │ GPU 0.2/3.4GB │ 2531s
-            ✅ Best model saved! Val Acc: 0.7096
-  Ep 07/8 │ TrLoss 0.8838  TrAcc 0.6419 │  ClLoss 0.3181  ClAcc 0.6942 │ VaLoss 0.3295  VaAcc 0.6866 │ LR 6.98e-04 │ GPU 0.2/3.4GB │ 2485s
-  Ep 08/8 │ TrLoss 0.7764  TrAcc 0.6760 │  ClLoss 0.2879  ClAcc 0.7212 │ VaLoss 0.2999  VaAcc 0.7128 │ LR 1.38e-03 │ GPU 0.2/3.4GB │ 2568s
-            ✅ Best model saved! Val Acc: 0.7128
-  Best weights restored (Val Acc: 0.7128)
+  Ep 01/8 │ TrLoss 1.5018  TrAcc 0.4889 │  ClLoss 0.4451  ClAcc 0.6497 │ VaLoss 0.4408  VaAcc 0.6492 │ LR 1.22e-03 │ GPU 0.1/3.4GB │ 2409s
+            ✅ Best model saved! Val Acc: 0.6492
+  Ep 02/8 │ TrLoss 1.2052  TrAcc 0.5791 │  ClLoss 0.3786  ClAcc 0.7122 │ VaLoss 0.3760  VaAcc 0.7104 │ LR 2.41e-03 │ GPU 0.2/3.4GB │ 2250s
+            ✅ Best model saved! Val Acc: 0.7104
+  Ep 03/8 │ TrLoss 1.2013  TrAcc 0.5800 │  ClLoss 0.3904  ClAcc 0.7074 │ VaLoss 0.3891  VaAcc 0.7030 │ LR 1.22e-03 │ GPU 0.2/3.4GB │ 2256s
+  Ep 04/8 │ TrLoss 1.1278  TrAcc 0.6066 │  ClLoss 0.3598  ClAcc 0.7196 │ VaLoss 0.3611  VaAcc 0.7182 │ LR 2.41e-03 │ GPU 0.2/3.4GB │ 2272s
+            ✅ Best model saved! Val Acc: 0.7182
+  Ep 05/8 │ TrLoss 1.0846  TrAcc 0.6135 │  ClLoss 0.3622  ClAcc 0.7225 │ VaLoss 0.3652  VaAcc 0.7179 │ LR 1.22e-03 │ GPU 0.2/3.4GB │ 2287s
+  Ep 06/8 │ TrLoss 1.0241  TrAcc 0.6318 │  ClLoss 0.3457  ClAcc 0.7355 │ VaLoss 0.3484  VaAcc 0.7296 │ LR 2.41e-03 │ GPU 0.2/3.4GB │ 2282s
+            ✅ Best model saved! Val Acc: 0.7296
+  Ep 07/8 │ TrLoss 1.0070  TrAcc 0.6327 │  ClLoss 0.3497  ClAcc 0.7397 │ VaLoss 0.3544  VaAcc 0.7371 │ LR 1.22e-03 │ GPU 0.2/3.4GB │ 2261s
+            ✅ Best model saved! Val Acc: 0.7371
+  Ep 08/8 │ TrLoss 0.9237  TrAcc 0.6576 │  ClLoss 0.3427  ClAcc 0.7381 │ VaLoss 0.3446  VaAcc 0.7390 │ LR 2.41e-03 │ GPU 0.2/3.4GB │ 2276s
+            ✅ Best model saved! Val Acc: 0.7390
+  Best weights restored (Val Acc: 0.7390)
 
-  ✅ Stage 1 done — Best Val Acc: 0.7128
+  ✅ Stage 1 done — Best Val Acc: 0.7390
 
 ════════════════════════════════════════════════════════════
   🔓 STAGE 2: Fine-Tuning (all layers unfrozen)
 ════════════════════════════════════════════════════════════
-  Image size: 260×260, Batch: 48
+  Image size: 384×384, Batch: 24
   Clean train eval subset: 6,144
   🖼️  Augmented samples saved: EfficientNetV2S/images/augmented_samples_stage2.png
-  🔓 Backbone unfrozen: 21,500,091 / 21,500,091 params trainable (100.0%)
+  🔓 Backbone unfrozen: 20,887,223 / 20,887,223 params trainable (100.0%)
 
   🔍 Running LR Finder (200 iterations, LR: 1e-07 → 1e+01)...
 Stopping early, the loss has diverged
 Learning rate search finished. See the graph with {finder_name}.plot()
   📊 LR Finder plot saved: EfficientNetV2S/images/lr_finder_stage2.png
-  ✅ Suggested LR: 2.61e-04
-  Discriminative LR — Head: 2.61e-04, Backbone: 1.31e-05
-  Param groups: backbone(280+170), head(5+5)
-  Scheduler: LinearWarmup(2ep) → CosineAnnealing(28ep)
+  ✅ Suggested LR: 3.74e-05
+  Discriminative LR — Head: 3.74e-05, Backbone: 1.87e-06
+  Param groups: backbone(280+170), head(3+3)
+  Scheduler: LinearWarmup(5ep) → CosineAnnealing(55ep)
 
 ════════════════════════════════════════════════════════════
-  🏋️ Stage2_FineTuning: 30 epochs (patience=5)
+  🏋️ Stage2_FineTuning: 60 epochs (patience=12)
     Scheduler: per-epoch
-    Label mixing: Mixup-only (prob=0.30 -> 0.00)
+    Label mixing: Mixup-only (prob=0.15 -> 0.00)
     Train accuracy uses soft labels; clean-train eval uses deterministic transforms
 ════════════════════════════════════════════════════════════
-  Ep 01/30 │ TrLoss 1.2274  TrAcc 0.7471 │  ClLoss 0.9101  ClAcc 0.8493 │ VaLoss 0.9363  VaAcc 0.8518 │ LR 2.61e-05 │ GPU 0.3/12.1GB │ 1637s
-            ✅ Best model saved! Val Acc: 0.8518
-  Ep 02/30 │ TrLoss 1.0352  TrAcc 0.8143 │  ClLoss 0.7470  ClAcc 0.8947 │ VaLoss 0.7757  VaAcc 0.8963 │ LR 1.44e-04 │ GPU 0.4/12.1GB │ 1129s
-            ✅ Best model saved! Val Acc: 0.8963
-  Ep 03/30 │ TrLoss 0.9119  TrAcc 0.8452 │  ClLoss 0.6783  ClAcc 0.9146 │ VaLoss 0.7135  VaAcc 0.9062 │ LR 2.61e-04 │ GPU 0.4/12.1GB │ 1124s
-            ✅ Best model saved! Val Acc: 0.9062
-  Ep 04/30 │ TrLoss 0.8150  TrAcc 0.8695 │  ClLoss 0.6511  ClAcc 0.9180 │ VaLoss 0.6831  VaAcc 0.9116 │ LR 2.60e-04 │ GPU 0.4/12.1GB │ 1131s
-            ✅ Best model saved! Val Acc: 0.9116
-  Ep 05/30 │ TrLoss 0.7778  TrAcc 0.8781 │  ClLoss 0.6319  ClAcc 0.9251 │ VaLoss 0.6613  VaAcc 0.9217 │ LR 2.58e-04 │ GPU 0.4/12.1GB │ 1129s
-            ✅ Best model saved! Val Acc: 0.9217
-  Ep 06/30 │ TrLoss 0.7453  TrAcc 0.8857 │  ClLoss 0.6121  ClAcc 0.9302 │ VaLoss 0.6494  VaAcc 0.9221 │ LR 2.54e-04 │ GPU 0.4/12.1GB │ 1132s
-            ✅ Best model saved! Val Acc: 0.9221
-  Ep 07/30 │ TrLoss 0.7110  TrAcc 0.8915 │  ClLoss 0.6020  ClAcc 0.9305 │ VaLoss 0.6384  VaAcc 0.9240 │ LR 2.48e-04 │ GPU 0.4/12.1GB │ 1128s
-            ✅ Best model saved! Val Acc: 0.9240
-  Ep 08/30 │ TrLoss 0.6911  TrAcc 0.8971 │  ClLoss 0.5916  ClAcc 0.9312 │ VaLoss 0.6368  VaAcc 0.9273 │ LR 2.41e-04 │ GPU 0.4/12.1GB │ 1119s
-            ✅ Best model saved! Val Acc: 0.9273
-  Ep 09/30 │ TrLoss 0.6635  TrAcc 0.9028 │  ClLoss 0.5872  ClAcc 0.9346 │ VaLoss 0.6318  VaAcc 0.9262 │ LR 2.33e-04 │ GPU 0.4/12.1GB │ 1122s
-  Ep 10/30 │ TrLoss 0.6564  TrAcc 0.9053 │  ClLoss 0.5816  ClAcc 0.9333 │ VaLoss 0.6336  VaAcc 0.9266 │ LR 2.23e-04 │ GPU 0.4/12.1GB │ 1124s
-  Ep 11/30 │ TrLoss 0.6419  TrAcc 0.9077 │  ClLoss 0.5769  ClAcc 0.9349 │ VaLoss 0.6276  VaAcc 0.9276 │ LR 2.12e-04 │ GPU 0.4/12.1GB │ 1138s
-            ✅ Best model saved! Val Acc: 0.9276
-  Ep 12/30 │ TrLoss 0.6249  TrAcc 0.9119 │  ClLoss 0.5716  ClAcc 0.9373 │ VaLoss 0.6249  VaAcc 0.9280 │ LR 2.00e-04 │ GPU 0.4/12.1GB │ 1136s
-            ✅ Best model saved! Val Acc: 0.9280
-  Ep 13/30 │ TrLoss 0.6158  TrAcc 0.9139 │  ClLoss 0.5707  ClAcc 0.9378 │ VaLoss 0.6237  VaAcc 0.9273 │ LR 1.87e-04 │ GPU 0.4/12.1GB │ 1126s
-  Ep 14/30 │ TrLoss 0.6075  TrAcc 0.9155 │  ClLoss 0.5661  ClAcc 0.9370 │ VaLoss 0.6251  VaAcc 0.9281 │ LR 1.74e-04 │ GPU 0.4/12.1GB │ 1131s
-            ✅ Best model saved! Val Acc: 0.9281
-  Ep 15/30 │ TrLoss 0.5948  TrAcc 0.9178 │  ClLoss 0.5627  ClAcc 0.9398 │ VaLoss 0.6207  VaAcc 0.9295 │ LR 1.60e-04 │ GPU 0.4/12.1GB │ 1122s
-            ✅ Best model saved! Val Acc: 0.9295
-  Ep 16/30 │ TrLoss 0.5845  TrAcc 0.9209 │  ClLoss 0.5567  ClAcc 0.9398 │ VaLoss 0.6199  VaAcc 0.9288 │ LR 1.45e-04 │ GPU 0.4/12.1GB │ 1127s
-  Ep 17/30 │ TrLoss 0.5746  TrAcc 0.9224 │  ClLoss 0.5524  ClAcc 0.9416 │ VaLoss 0.6213  VaAcc 0.9280 │ LR 1.31e-04 │ GPU 0.4/12.1GB │ 1118s
-  Ep 18/30 │ TrLoss 0.5725  TrAcc 0.9232 │  ClLoss 0.5539  ClAcc 0.9427 │ VaLoss 0.6234  VaAcc 0.9282 │ LR 1.16e-04 │ GPU 0.4/12.1GB │ 1134s
-  Ep 19/30 │ TrLoss 0.5531  TrAcc 0.9269 │  ClLoss 0.5478  ClAcc 0.9451 │ VaLoss 0.6195  VaAcc 0.9305 │ LR 1.02e-04 │ GPU 0.4/12.1GB │ 1136s
-            ✅ Best model saved! Val Acc: 0.9305
-  Ep 20/30 │ TrLoss 0.5548  TrAcc 0.9271 │  ClLoss 0.5496  ClAcc 0.9442 │ VaLoss 0.6202  VaAcc 0.9273 │ LR 8.76e-05 │ GPU 0.4/12.1GB │ 1123s
-  Ep 21/30 │ TrLoss 0.5395  TrAcc 0.9308 │  ClLoss 0.5437  ClAcc 0.9460 │ VaLoss 0.6185  VaAcc 0.9294 │ LR 7.40e-05 │ GPU 0.4/12.1GB │ 1126s
-  Ep 22/30 │ TrLoss 0.5321  TrAcc 0.9324 │  ClLoss 0.5424  ClAcc 0.9460 │ VaLoss 0.6186  VaAcc 0.9296 │ LR 6.12e-05 │ GPU 0.4/12.1GB │ 1129s
-  Ep 23/30 │ TrLoss 0.5249  TrAcc 0.9343 │  ClLoss 0.5425  ClAcc 0.9466 │ VaLoss 0.6199  VaAcc 0.9273 │ LR 4.93e-05 │ GPU 0.4/12.1GB │ 1128s
-  Ep 24/30 │ TrLoss 0.5250  TrAcc 0.9342 │  ClLoss 0.5401  ClAcc 0.9463 │ VaLoss 0.6200  VaAcc 0.9293 │ LR 3.83e-05 │ GPU 0.4/12.1GB │ 1133s
-  ⛔ Early stopping at epoch 24 (no improvement for 5 epochs)
-  Best weights restored (Val Acc: 0.9305)
+  Ep 01/60 │ TrLoss 0.7843  TrAcc 0.7019 │  ClLoss 0.3775  ClAcc 0.7297 │ VaLoss 0.3766  VaAcc 0.7362 │ LR 3.74e-06 │ GPU 0.3/12.0GB │ 3409s
+            ✅ Best model saved! Val Acc: 0.7362
+  Ep 02/60 │ TrLoss 0.7011  TrAcc 0.7347 │  ClLoss 0.3077  ClAcc 0.7936 │ VaLoss 0.3117  VaAcc 0.7913 │ LR 1.05e-05 │ GPU 0.4/12.0GB │ 2942s
+            ✅ Best model saved! Val Acc: 0.7913
+  Ep 03/60 │ TrLoss 0.6329  TrAcc 0.7687 │  ClLoss 0.2765  ClAcc 0.8218 │ VaLoss 0.2798  VaAcc 0.8215 │ LR 1.72e-05 │ GPU 0.4/12.0GB │ 2898s
+            ✅ Best model saved! Val Acc: 0.8215
+  Ep 04/60 │ TrLoss 0.5576  TrAcc 0.7990 │  ClLoss 0.2542  ClAcc 0.8400 │ VaLoss 0.2575  VaAcc 0.8403 │ LR 2.39e-05 │ GPU 0.4/12.0GB │ 2921s
+            ✅ Best model saved! Val Acc: 0.8403
+  Ep 05/60 │ TrLoss 0.4849  TrAcc 0.8222 │  ClLoss 0.2317  ClAcc 0.8555 │ VaLoss 0.2386  VaAcc 0.8537 │ LR 3.07e-05 │ GPU 0.4/12.0GB │ 2919s
+            ✅ Best model saved! Val Acc: 0.8537
+  Ep 06/60 │ TrLoss 0.4397  TrAcc 0.8420 │  ClLoss 0.2147  ClAcc 0.8776 │ VaLoss 0.2223  VaAcc 0.8743 │ LR 3.74e-05 │ GPU 0.4/12.0GB │ 2927s
+            ✅ Best model saved! Val Acc: 0.8743
+  Ep 07/60 │ TrLoss 0.4049  TrAcc 0.8536 │  ClLoss 0.2044  ClAcc 0.8857 │ VaLoss 0.2138  VaAcc 0.8799 │ LR 3.74e-05 │ GPU 0.4/12.0GB │ 2923s
+            ✅ Best model saved! Val Acc: 0.8799
+  Ep 08/60 │ TrLoss 0.3844  TrAcc 0.8640 │  ClLoss 0.1982  ClAcc 0.8851 │ VaLoss 0.2090  VaAcc 0.8785 │ LR 3.73e-05 │ GPU 0.4/12.0GB │ 2944s
+  Ep 09/60 │ TrLoss 0.3679  TrAcc 0.8695 │  ClLoss 0.1879  ClAcc 0.8997 │ VaLoss 0.1994  VaAcc 0.8944 │ LR 3.71e-05 │ GPU 0.4/12.0GB │ 2902s
+            ✅ Best model saved! Val Acc: 0.8944
+  Ep 10/60 │ TrLoss 0.3469  TrAcc 0.8763 │  ClLoss 0.1822  ClAcc 0.9014 │ VaLoss 0.1950  VaAcc 0.8939 │ LR 3.69e-05 │ GPU 0.4/12.0GB │ 2949s
+  Ep 11/60 │ TrLoss 0.3338  TrAcc 0.8838 │  ClLoss 0.1792  ClAcc 0.9025 │ VaLoss 0.1943  VaAcc 0.8977 │ LR 3.66e-05 │ GPU 0.4/12.0GB │ 2964s
+            ✅ Best model saved! Val Acc: 0.8977
+  Ep 12/60 │ TrLoss 0.3208  TrAcc 0.8883 │  ClLoss 0.1776  ClAcc 0.8986 │ VaLoss 0.1929  VaAcc 0.8963 │ LR 3.63e-05 │ GPU 0.4/12.0GB │ 2925s
+  Ep 13/60 │ TrLoss 0.3127  TrAcc 0.8916 │  ClLoss 0.1712  ClAcc 0.9038 │ VaLoss 0.1878  VaAcc 0.9018 │ LR 3.59e-05 │ GPU 0.4/12.0GB │ 2933s
+            ✅ Best model saved! Val Acc: 0.9018
+  Ep 14/60 │ TrLoss 0.3022  TrAcc 0.8940 │  ClLoss 0.1654  ClAcc 0.9128 │ VaLoss 0.1817  VaAcc 0.9090 │ LR 3.55e-05 │ GPU 0.4/12.0GB │ 2890s
+            ✅ Best model saved! Val Acc: 0.9090
+  Ep 15/60 │ TrLoss 0.2876  TrAcc 0.9001 │  ClLoss 0.1645  ClAcc 0.9111 │ VaLoss 0.1819  VaAcc 0.9077 │ LR 3.50e-05 │ GPU 0.4/12.0GB │ 2912s
+  Ep 16/60 │ TrLoss 0.2796  TrAcc 0.9040 │  ClLoss 0.1605  ClAcc 0.9150 │ VaLoss 0.1786  VaAcc 0.9115 │ LR 3.44e-05 │ GPU 0.4/12.0GB │ 2897s
+            ✅ Best model saved! Val Acc: 0.9115
+  Ep 17/60 │ TrLoss 0.2709  TrAcc 0.9062 │  ClLoss 0.1580  ClAcc 0.9154 │ VaLoss 0.1756  VaAcc 0.9129 │ LR 3.38e-05 │ GPU 0.4/12.0GB │ 2935s
+            ✅ Best model saved! Val Acc: 0.9129
+  Ep 18/60 │ TrLoss 0.2666  TrAcc 0.9070 │  ClLoss 0.1535  ClAcc 0.9214 │ VaLoss 0.1724  VaAcc 0.9184 │ LR 3.32e-05 │ GPU 0.4/12.0GB │ 2876s
+            ✅ Best model saved! Val Acc: 0.9184
+  Ep 19/60 │ TrLoss 0.2584  TrAcc 0.9103 │  ClLoss 0.1521  ClAcc 0.9238 │ VaLoss 0.1713  VaAcc 0.9176 │ LR 3.25e-05 │ GPU 0.4/12.0GB │ 2913s
+  Ep 20/60 │ TrLoss 0.2596  TrAcc 0.9120 │  ClLoss 0.1500  ClAcc 0.9233 │ VaLoss 0.1696  VaAcc 0.9192 │ LR 3.17e-05 │ GPU 0.4/12.0GB │ 2964s
+            ✅ Best model saved! Val Acc: 0.9192
+  Ep 21/60 │ TrLoss 0.2459  TrAcc 0.9133 │  ClLoss 0.1504  ClAcc 0.9250 │ VaLoss 0.1705  VaAcc 0.9185 │ LR 3.10e-05 │ GPU 0.4/12.0GB │ 2959s
+  Ep 22/60 │ TrLoss 0.2394  TrAcc 0.9184 │  ClLoss 0.1472  ClAcc 0.9256 │ VaLoss 0.1684  VaAcc 0.9204 │ LR 3.01e-05 │ GPU 0.4/12.0GB │ 2912s
+            ✅ Best model saved! Val Acc: 0.9204
+  Ep 23/60 │ TrLoss 0.2383  TrAcc 0.9170 │  ClLoss 0.1463  ClAcc 0.9235 │ VaLoss 0.1679  VaAcc 0.9185 │ LR 2.93e-05 │ GPU 0.4/12.0GB │ 2892s
+  Ep 24/60 │ TrLoss 0.2393  TrAcc 0.9190 │  ClLoss 0.1461  ClAcc 0.9264 │ VaLoss 0.1678  VaAcc 0.9188 │ LR 2.84e-05 │ GPU 0.4/12.0GB │ 2920s
+  Ep 25/60 │ TrLoss 0.2322  TrAcc 0.9201 │  ClLoss 0.1427  ClAcc 0.9312 │ VaLoss 0.1651  VaAcc 0.9245 │ LR 2.75e-05 │ GPU 0.4/12.0GB │ 2875s
+            ✅ Best model saved! Val Acc: 0.9245
+  Ep 26/60 │ TrLoss 0.2371  TrAcc 0.9192 │  ClLoss 0.1422  ClAcc 0.9295 │ VaLoss 0.1649  VaAcc 0.9235 │ LR 2.65e-05 │ GPU 0.4/12.0GB │ 2900s
+  Ep 27/60 │ TrLoss 0.2185  TrAcc 0.9258 │  ClLoss 0.1399  ClAcc 0.9294 │ VaLoss 0.1617  VaAcc 0.9243 │ LR 2.55e-05 │ GPU 0.4/12.0GB │ 2898s
+  Ep 28/60 │ TrLoss 0.2203  TrAcc 0.9255 │  ClLoss 0.1398  ClAcc 0.9308 │ VaLoss 0.1629  VaAcc 0.9240 │ LR 2.45e-05 │ GPU 0.4/12.0GB │ 2951s
+  Ep 29/60 │ TrLoss 0.2262  TrAcc 0.9244 │  ClLoss 0.1384  ClAcc 0.9328 │ VaLoss 0.1616  VaAcc 0.9245 │ LR 2.35e-05 │ GPU 0.4/12.0GB │ 2918s
+  Ep 30/60 │ TrLoss 0.2090  TrAcc 0.9278 │  ClLoss 0.1377  ClAcc 0.9323 │ VaLoss 0.1608  VaAcc 0.9246 │ LR 2.25e-05 │ GPU 0.4/12.0GB │ 2899s
+            ✅ Best model saved! Val Acc: 0.9246
+  Ep 31/60 │ TrLoss 0.2131  TrAcc 0.9272 │  ClLoss 0.1385  ClAcc 0.9316 │ VaLoss 0.1623  VaAcc 0.9240 │ LR 2.14e-05 │ GPU 0.4/12.0GB │ 2929s
+  Ep 32/60 │ TrLoss 0.2117  TrAcc 0.9292 │  ClLoss 0.1358  ClAcc 0.9346 │ VaLoss 0.1598  VaAcc 0.9268 │ LR 2.03e-05 │ GPU 0.4/12.0GB │ 2927s
+            ✅ Best model saved! Val Acc: 0.9268
+  Ep 33/60 │ TrLoss 0.2112  TrAcc 0.9286 │  ClLoss 0.1362  ClAcc 0.9323 │ VaLoss 0.1599  VaAcc 0.9249 │ LR 1.93e-05 │ GPU 0.4/12.0GB │ 2938s
+  Ep 34/60 │ TrLoss 0.1994  TrAcc 0.9309 │  ClLoss 0.1344  ClAcc 0.9364 │ VaLoss 0.1582  VaAcc 0.9285 │ LR 1.82e-05 │ GPU 0.4/12.0GB │ 2939s
+            ✅ Best model saved! Val Acc: 0.9285
+  Ep 35/60 │ TrLoss 0.2001  TrAcc 0.9313 │  ClLoss 0.1328  ClAcc 0.9378 │ VaLoss 0.1571  VaAcc 0.9287 │ LR 1.72e-05 │ GPU 0.4/12.0GB │ 2916s
+            ✅ Best model saved! Val Acc: 0.9287
+  Ep 36/60 │ TrLoss 0.1974  TrAcc 0.9340 │  ClLoss 0.1345  ClAcc 0.9355 │ VaLoss 0.1587  VaAcc 0.9262 │ LR 1.61e-05 │ GPU 0.4/12.0GB │ 2930s
+  Ep 37/60 │ TrLoss 0.1991  TrAcc 0.9323 │  ClLoss 0.1336  ClAcc 0.9365 │ VaLoss 0.1580  VaAcc 0.9281 │ LR 1.50e-05 │ GPU 0.4/12.0GB │ 2898s
+  Ep 38/60 │ TrLoss 0.1867  TrAcc 0.9364 │  ClLoss 0.1321  ClAcc 0.9336 │ VaLoss 0.1569  VaAcc 0.9281 │ LR 1.40e-05 │ GPU 0.4/12.0GB │ 2939s
+  Ep 39/60 │ TrLoss 0.1876  TrAcc 0.9364 │  ClLoss 0.1327  ClAcc 0.9341 │ VaLoss 0.1568  VaAcc 0.9273 │ LR 1.30e-05 │ GPU 0.4/12.0GB │ 2983s
+  Ep 40/60 │ TrLoss 0.1880  TrAcc 0.9354 │  ClLoss 0.1330  ClAcc 0.9347 │ VaLoss 0.1578  VaAcc 0.9268 │ LR 1.20e-05 │ GPU 0.4/12.0GB │ 3053s
+  Ep 41/60 │ TrLoss 0.1854  TrAcc 0.9380 │  ClLoss 0.1314  ClAcc 0.9375 │ VaLoss 0.1556  VaAcc 0.9317 │ LR 1.10e-05 │ GPU 0.4/12.0GB │ 3077s
+            ✅ Best model saved! Val Acc: 0.9317
+  Ep 42/60 │ TrLoss 0.1869  TrAcc 0.9368 │  ClLoss 0.1310  ClAcc 0.9393 │ VaLoss 0.1553  VaAcc 0.9304 │ LR 1.00e-05 │ GPU 0.4/12.0GB │ 3039s
+  Ep 43/60 │ TrLoss 0.1810  TrAcc 0.9383 │  ClLoss 0.1320  ClAcc 0.9347 │ VaLoss 0.1574  VaAcc 0.9277 │ LR 9.12e-06 │ GPU 0.4/12.0GB │ 3014s
+  Ep 44/60 │ TrLoss 0.1751  TrAcc 0.9406 │  ClLoss 0.1298  ClAcc 0.9386 │ VaLoss 0.1544  VaAcc 0.9306 │ LR 8.22e-06 │ GPU 0.4/12.0GB │ 2985s
+  Ep 45/60 │ TrLoss 0.1802  TrAcc 0.9383 │  ClLoss 0.1305  ClAcc 0.9375 │ VaLoss 0.1552  VaAcc 0.9284 │ LR 7.36e-06 │ GPU 0.4/12.0GB │ 2970s
+  Ep 46/60 │ TrLoss 0.1763  TrAcc 0.9405 │  ClLoss 0.1313  ClAcc 0.9382 │ VaLoss 0.1561  VaAcc 0.9287 │ LR 6.54e-06 │ GPU 0.4/12.0GB │ 2942s
+  Ep 47/60 │ TrLoss 0.1706  TrAcc 0.9418 │  ClLoss 0.1289  ClAcc 0.9403 │ VaLoss 0.1538  VaAcc 0.9318 │ LR 5.75e-06 │ GPU 0.4/12.0GB │ 2932s
+            ✅ Best model saved! Val Acc: 0.9318
+  Ep 48/60 │ TrLoss 0.1718  TrAcc 0.9410 │  ClLoss 0.1296  ClAcc 0.9360 │ VaLoss 0.1543  VaAcc 0.9287 │ LR 5.01e-06 │ GPU 0.4/12.0GB │ 2928s
+  Ep 49/60 │ TrLoss 0.1718  TrAcc 0.9402 │  ClLoss 0.1303  ClAcc 0.9383 │ VaLoss 0.1551  VaAcc 0.9297 │ LR 4.31e-06 │ GPU 0.4/12.0GB │ 2947s
+  Ep 50/60 │ TrLoss 0.1710  TrAcc 0.9405 │  ClLoss 0.1283  ClAcc 0.9424 │ VaLoss 0.1532  VaAcc 0.9323 │ LR 3.66e-06 │ GPU 0.4/12.0GB │ 2924s
+            ✅ Best model saved! Val Acc: 0.9323
+  Ep 51/60 │ TrLoss 0.1685  TrAcc 0.9414 │  ClLoss 0.1287  ClAcc 0.9403 │ VaLoss 0.1542  VaAcc 0.9309 │ LR 3.06e-06 │ GPU 0.4/12.0GB │ 2933s
+  Ep 52/60 │ TrLoss 0.1634  TrAcc 0.9438 │  ClLoss 0.1304  ClAcc 0.9370 │ VaLoss 0.1552  VaAcc 0.9287 │ LR 2.51e-06 │ GPU 0.4/12.0GB │ 2883s
+  Ep 53/60 │ TrLoss 0.1678  TrAcc 0.9407 │  ClLoss 0.1295  ClAcc 0.9378 │ VaLoss 0.1547  VaAcc 0.9298 │ LR 2.01e-06 │ GPU 0.4/12.0GB │ 2916s
+  Ep 54/60 │ TrLoss 0.1631  TrAcc 0.9434 │  ClLoss 0.1299  ClAcc 0.9391 │ VaLoss 0.1555  VaAcc 0.9315 │ LR 1.57e-06 │ GPU 0.4/12.0GB │ 2886s
+  Ep 55/60 │ TrLoss 0.1631  TrAcc 0.9424 │  ClLoss 0.1298  ClAcc 0.9385 │ VaLoss 0.1552  VaAcc 0.9302 │ LR 1.18e-06 │ GPU 0.4/12.0GB │ 2905s
+  Ep 56/60 │ TrLoss 0.1620  TrAcc 0.9431 │  ClLoss 0.1284  ClAcc 0.9414 │ VaLoss 0.1546  VaAcc 0.9326 │ LR 8.55e-07 │ GPU 0.4/12.0GB │ 2916s
+            ✅ Best model saved! Val Acc: 0.9326
+  Ep 57/60 │ TrLoss 0.1598  TrAcc 0.9443 │  ClLoss 0.1285  ClAcc 0.9409 │ VaLoss 0.1535  VaAcc 0.9312 │ LR 5.85e-07 │ GPU 0.4/12.0GB │ 2906s
+  Ep 58/60 │ TrLoss 0.1552  TrAcc 0.9456 │  ClLoss 0.1285  ClAcc 0.9395 │ VaLoss 0.1535  VaAcc 0.9314 │ LR 3.73e-07 │ GPU 0.4/12.0GB │ 2908s
+  Ep 59/60 │ TrLoss 0.1546  TrAcc 0.9465 │  ClLoss 0.1285  ClAcc 0.9403 │ VaLoss 0.1538  VaAcc 0.9312 │ LR 2.22e-07 │ GPU 0.4/12.0GB │ 2900s
+  Ep 60/60 │ TrLoss 0.1531  TrAcc 0.9452 │  ClLoss 0.1293  ClAcc 0.9395 │ VaLoss 0.1545  VaAcc 0.9313 │ LR 1.30e-07 │ GPU 0.4/12.0GB │ 2911s
+  Best weights restored (Val Acc: 0.9326)
 
-  ✅ Stage 2 done — Best Val Acc: 0.9305
+  ✅ Stage 2 done — Best Val Acc: 0.9326
   📊 Training history saved: EfficientNetV2S/images/training_history.png
 
 ════════════════════════════════════════════════════════════
   🧪 FINAL EVALUATION ON TEST SET
 ════════════════════════════════════════════════════════════
-  Test samples: 14,247
+  Test samples: 14,217
+  Standard test accuracy: 0.9344
+  🔄 TTA: evaluating with 1 original + 5 augmented views...
+  ✅ TTA accuracy: 0.9359
+  📈 Using TTA predictions (better accuracy)
 
   📋 Classification Report:
                                 precision    recall  f1-score   support
 
-  Apple___alternaria_leaf_spot     1.0000    1.0000    1.0000        29
+  Apple___alternaria_leaf_spot     1.0000    0.9655    0.9825        29
              Apple___black_rot     1.0000    1.0000    1.0000        63
             Apple___brown_spot     1.0000    0.9545    0.9767        22
-             Apple___gray_spot     0.9302    1.0000    0.9639        40
-               Apple___healthy     0.9922    0.9845    0.9883       258
-                  Apple___rust     1.0000    0.9760    0.9879       125
-                  Apple___scab     0.9919    0.9919    0.9919       123
-  Bell_pepper___bacterial_spot     0.4949    0.9703    0.6555       101
-         Bell_pepper___healthy     0.1111    0.0134    0.0240       149
+             Apple___gray_spot     0.9091    1.0000    0.9524        40
+               Apple___healthy     1.0000    0.9845    0.9922       258
+                  Apple___rust     0.9919    0.9840    0.9880       125
+                  Apple___scab     0.9840    1.0000    0.9919       123
            Blueberry___healthy     1.0000    1.0000    1.0000       151
-    Cassava___bacterial_blight     0.6792    0.6545    0.6667       110
-Cassava___brown_streak_disease     0.7751    0.7364    0.7552       220
-        Cassava___green_mottle     0.7783    0.7167    0.7462       240
-             Cassava___healthy     0.6631    0.7143    0.6877       259
-      Cassava___mosaic_disease     0.9472    0.9544    0.9508      1317
+    Cassava___bacterial_blight     0.4800    0.8727    0.6194       110
+Cassava___brown_streak_disease     0.5916    0.7045    0.6432       220
+        Cassava___green_mottle     0.6681    0.6542    0.6611       240
+             Cassava___healthy     0.5897    0.6602    0.6230       259
+      Cassava___mosaic_disease     0.9672    0.8497    0.9046      1317
               Cherry___healthy     1.0000    1.0000    1.0000        86
        Cherry___powdery_mildew     1.0000    1.0000    1.0000       106
-                Chili__healthy     0.7000    0.6364    0.6667        11
-              Chili__leaf curl     0.7273    0.7273    0.7273        11
-              Chili__leaf spot     0.6111    1.0000    0.7586        11
-               Chili__whitefly     0.7857    1.0000    0.8800        11
-              Chili__yellowish     0.6923    0.8182    0.7500        11
-              Coffee___healthy     0.9390    0.9625    0.9506        80
-      Coffee___red_spider_mite     0.8182    0.5000    0.6207        18
-                 Coffee___rust     0.8361    0.8361    0.8361        61
+                Chili__healthy     0.9000    0.8182    0.8571        11
+              Chili__leaf curl     0.7778    0.6364    0.7000        11
+              Chili__leaf spot     0.9167    1.0000    0.9565        11
+               Chili__whitefly     0.8333    0.9091    0.8696        11
+              Chili__yellowish     0.6250    0.9091    0.7407        11
+              Coffee___healthy     0.9747    0.9625    0.9686        80
+      Coffee___red_spider_mite     0.6111    0.6111    0.6111        18
+                 Coffee___rust     0.8281    0.8689    0.8480        61
             Corn___common_rust     1.0000    1.0000    1.0000       120
                 Corn___healthy     1.0000    1.0000    1.0000       117
-   Corn___northern_leaf_blight     0.9897    0.9697    0.9796        99
-          Corn__gray_leaf_spot     0.9732    0.9909    0.9820       110
+   Corn___northern_leaf_blight     0.9694    0.9596    0.9645        99
+          Corn__gray_leaf_spot     0.9640    0.9727    0.9683       110
             Cucumber__diseased     1.0000    1.0000    1.0000        36
              Cucumber__healthy     1.0000    1.0000    1.0000        35
                Gauva__diseased     1.0000    1.0000    1.0000        15
                 Gauva__healthy     1.0000    1.0000    1.0000        29
            Grape___Leaf_blight     1.0000    1.0000    1.0000       149
-         Grape___black_measles     1.0000    0.9963    0.9981       268
-             Grape___black_rot     1.0000    1.0000    1.0000       159
-               Grape___healthy     0.9942    1.0000    0.9971       171
-               Jamun__diseased     0.9706    0.9429    0.9565        35
-                Jamun__healthy     0.9333    0.9655    0.9492        29
-               Lemon__diseased     1.0000    0.7778    0.8750         9
-                Lemon__healthy     0.8947    1.0000    0.9444        17
+         Grape___black_measles     1.0000    0.9888    0.9944       268
+             Grape___black_rot     0.9938    1.0000    0.9969       159
+               Grape___healthy     0.9942    0.9942    0.9942       171
+               Jamun__diseased     0.9714    0.9714    0.9714        35
+                Jamun__healthy     0.9655    0.9655    0.9655        29
+                Lemon__healthy     1.0000    1.0000    1.0000        17
                Mango__diseased     1.0000    1.0000    1.0000        27
-                Mango__healthy     1.0000    1.0000    1.0000        18
-      Orange___citrus_greening     1.0000    1.0000    1.0000       552
+                Mango__healthy     0.9474    1.0000    0.9730        18
+      Orange___citrus_greening     1.0000    0.9982    0.9991       552
         Peach___bacterial_spot     1.0000    1.0000    1.0000       231
                Peach___healthy     1.0000    1.0000    1.0000        37
-   Pepper_bell__bacterial_spot     0.5455    0.0556    0.1008       108
-          Pepper_bell__healthy     0.4772    0.8774    0.6182       155
+  Pepper_bell___bacterial_spot     0.4718    0.9109    0.6216       101
+         Pepper_bell___healthy     0.4724    0.8054    0.5955       149
+   Pepper_bell__bacterial_spot     0.2667    0.0370    0.0650       108
+          Pepper_bell__healthy     0.3478    0.1032    0.1592       155
          Pomegranate__diseased     1.0000    1.0000    1.0000        28
           Pomegranate__healthy     1.0000    1.0000    1.0000        30
        Potato___bacterial_wilt     1.0000    1.0000    1.0000        58
-         Potato___early_blight     0.9925    1.0000    0.9962       264
-              Potato___healthy     0.9955    0.9781    0.9867       228
-          Potato___late_blight     0.9953    1.0000    0.9976       210
-       Potato___leafroll_virus     1.0000    0.9630    0.9811        54
-         Potato___mosaic_virus     0.9577    1.0000    0.9784        68
-                Potato___pests     0.9683    0.9839    0.9760        62
-         Potato___phytophthora     0.9730    1.0000    0.9863        36
+         Potato___early_blight     0.9962    0.9924    0.9943       264
+              Potato___healthy     0.9955    0.9649    0.9800       228
+          Potato___late_blight     0.9810    0.9857    0.9834       210
+       Potato___leafroll_virus     1.0000    1.0000    1.0000        54
+         Potato___mosaic_virus     0.9855    1.0000    0.9927        68
+                Potato___pests     0.9524    0.9677    0.9600        62
+         Potato___phytophthora     0.9231    1.0000    0.9600        36
            Raspberry___healthy     1.0000    1.0000    1.0000        38
        Rice___bacterial_blight     1.0000    1.0000    1.0000       159
                   Rice___blast     1.0000    1.0000    1.0000       145
              Rice___brown_spot     1.0000    1.0000    1.0000       161
-                 Rice___tungro     0.9925    1.0000    0.9962       132
-                 Rice__healthy     0.9728    0.9533    0.9630       150
+                 Rice___tungro     1.0000    1.0000    1.0000       132
+                 Rice__healthy     0.9474    0.9600    0.9536       150
                    Rice__hispa     1.0000    1.0000    1.0000        57
-              Rice__leaf_blast     0.9314    0.9596    0.9453        99
+              Rice__leaf_blast     0.9381    0.9192    0.9286        99
               Rice__neck_blast     1.0000    1.0000    1.0000       101
                 Rose___healthy     1.0000    1.0000    1.0000       499
                    Rose___rust     1.0000    1.0000    1.0000       496
             Rose___slug_sawfly     1.0000    1.0000    1.0000       499
-          Soybean__caterpillar     0.9731    0.9789    0.9760       332
-  Soybean__diabrotica_speciosa     0.9771    0.9638    0.9704       221
-              Soybean__healthy     0.9934    0.9967    0.9950       601
-       Soybean__powdery_mildew     1.0000    0.8889    0.9412         9
+          Soybean__caterpillar     0.9018    0.9127    0.9072       332
+  Soybean__diabrotica_speciosa     0.8452    0.9140    0.8783       221
+              Soybean__healthy     0.9914    0.9551    0.9729       601
        Squash___powdery_mildew     1.0000    1.0000    1.0000       184
           Strawberry___healthy     1.0000    1.0000    1.0000        47
       Strawberry___leaf_scorch     1.0000    1.0000    1.0000       112
    Sugarcane__bacterial_blight     1.0000    1.0000    1.0000        11
-           Sugercane___healthy     1.0000    0.9811    0.9905        53
-            Sugercane___mosaic     0.9592    1.0000    0.9792        47
-           Sugercane___red_rot     0.9811    0.9811    0.9811        53
-              Sugercane___rust     0.9808    0.9808    0.9808        52
-       Sugercane___yellow_leaf     0.9796    0.9412    0.9600        51
+           Sugercane___healthy     1.0000    0.9434    0.9709        53
+            Sugercane___mosaic     0.9375    0.9574    0.9474        47
+           Sugercane___red_rot     0.9630    0.9811    0.9720        53
+              Sugercane___rust     0.9623    0.9808    0.9714        52
+       Sugercane___yellow_leaf     0.9412    0.9412    0.9412        51
                Tea__algal_leaf     1.0000    1.0000    1.0000        35
               Tea__anthracnose     1.0000    1.0000    1.0000        31
             Tea__bird_eye_spot     1.0000    1.0000    1.0000        31
              Tea__brown_blight     1.0000    1.0000    1.0000        35
                   Tea__healthy     1.0000    1.0000    1.0000        22
-       Tomato___bacterial_spot     1.0000    1.0000    1.0000       214
-         Tomato___early_blight     1.0000    0.9901    0.9950       101
+       Tomato___bacterial_spot     0.9726    0.9953    0.9838       214
+         Tomato___early_blight     0.9615    0.9901    0.9756       101
               Tomato___healthy     1.0000    1.0000    1.0000       160
-          Tomato___late_blight     0.9948    1.0000    0.9974       192
-            Tomato___leaf_curl     0.6251    1.0000    0.7693       537
-            Tomato___leaf_mold     1.0000    1.0000    1.0000        96
-         Tomato___mosaic_virus     1.0000    1.0000    1.0000        38
-   Tomato___septoria_leaf_spot     1.0000    1.0000    1.0000       178
-         Tomato___spider_mites     1.0000    1.0000    1.0000       169
-          Tomato___target_spot     1.0000    1.0000    1.0000       141
-Tomato__yellow_leaf_curl_virus     0.0000    0.0000    0.0000       322
+          Tomato___late_blight     0.9791    0.9740    0.9765       192
+            Tomato___leaf_curl     0.9988    0.9860    0.9924       858
+            Tomato___leaf_mold     0.9897    1.0000    0.9948        96
+         Tomato___mosaic_virus     0.9500    1.0000    0.9744        38
+   Tomato___septoria_leaf_spot     0.9944    0.9944    0.9944       178
+         Tomato___spider_mites     0.9826    1.0000    0.9912       169
+          Tomato___target_spot     0.9930    1.0000    0.9965       141
       Watermelon___anthracnose     1.0000    1.0000    1.0000        16
      Watermelon___downy_mildew     1.0000    1.0000    1.0000        39
-          Watermelon___healthy     1.0000    1.0000    1.0000        21
+          Watermelon___healthy     0.9545    1.0000    0.9767        21
      Watermelon___mosaic_virus     1.0000    1.0000    1.0000        42
-             Wheat__brown_rust     1.0000    1.0000    1.0000        93
-                Wheat__healthy     1.0000    1.0000    1.0000       123
-               Wheat__septoria     1.0000    1.0000    1.0000        11
+             Wheat__brown_rust     0.9894    1.0000    0.9947        93
+                Wheat__healthy     1.0000    0.9919    0.9959       123
             Wheat__yellow_rust     1.0000    1.0000    1.0000       114
 
-                      accuracy                         0.9309     14247
-                     macro avg     0.9299    0.9370    0.9283     14247
-                  weighted avg     0.9139    0.9309    0.9174     14247
+                      accuracy                         0.9359     14217
+                     macro avg     0.9324    0.9452    0.9351     14217
+                  weighted avg     0.9388    0.9359    0.9340     14217
 
   Report saved: EfficientNetV2S/logs/classification_report.txt
   📊 Confusion matrix saved: EfficientNetV2S/images/confusion_matrix.png
@@ -308,10 +355,10 @@ Tomato__yellow_leaf_curl_virus     0.0000    0.0000    0.0000       322
 ════════════════════════════════════════════════════════════
   🌿 TRAINING COMPLETE!
 ════════════════════════════════════════════════════════════
-  Classes:              107
-  Stage 1 Best Val Acc: 0.7128
-  Stage 2 Best Val Acc: 0.9305
-  Test Accuracy:        0.9308626377482979
+  Classes:              103
+  Stage 1 Best Val Acc: 0.7390
+  Stage 2 Best Val Acc: 0.9326
+  Test Accuracy:        0.9358514454526271
 
   📁 All outputs in: EfficientNetV2S/
      models/best_model.pth         — PyTorch weights

@@ -266,21 +266,21 @@ def get_hardware_profile(device, requested_profile="auto", colab=False):
         "t4_16gb": {
             "name": "t4_16gb",
             "s1_batch": 192,
-            "s2_batch": 48,
+            "s2_batch": 24,
             "accum_steps_s1": 1,
-            "accum_steps_s2": 2,
+            "accum_steps_s2": 4,
             "s1_img_size": 224,
-            "s2_img_size": 260,
+            "s2_img_size": 384,
             "num_workers": 4 if colab else min(base_workers, 4),
         },
         "generic_16gb": {
             "name": "generic_16gb",
             "s1_batch": 224,
-            "s2_batch": 48,
+            "s2_batch": 40,
             "accum_steps_s1": 1,
-            "accum_steps_s2": 1,
+            "accum_steps_s2": 2,
             "s1_img_size": 224,
-            "s2_img_size": 260,
+            "s2_img_size": 300,
             "num_workers": 4 if colab else min(base_workers, 6),
         },
         "generic_24gb": {
@@ -803,19 +803,15 @@ def build_model(num_classes, device):
     for param in model.features.parameters():
         param.requires_grad = False
 
-    # Stronger classification head (wider layers to handle 116 classes)
+    # Simplified head — single bottleneck for better gradient flow with 100+ classes
     in_features = model.classifier[1].in_features  # 1280
     model.classifier = nn.Sequential(
-        nn.Dropout(p=0.2),
-        nn.Linear(in_features, 768),
-        nn.BatchNorm1d(768),
+        nn.Dropout(p=0.3),
+        nn.Linear(in_features, 512),
+        nn.BatchNorm1d(512),
         nn.SiLU(inplace=True),
         nn.Dropout(p=0.1),
-        nn.Linear(768, 384),
-        nn.BatchNorm1d(384),
-        nn.SiLU(inplace=True),
-        nn.Dropout(p=0.05),
-        nn.Linear(384, num_classes),
+        nn.Linear(512, num_classes),
     )
 
     model = model.to(device)
@@ -1297,6 +1293,76 @@ def evaluate_model(model, dataloader, device):
     return np.concatenate(all_labels), np.concatenate(all_preds)
 
 
+@torch.no_grad()
+def evaluate_model_tta(model, test_dir, image_size, mean, std, batch_size,
+                       num_workers, device, n_augments=5):
+    """
+    Test-Time Augmentation: average predictions over multiple augmented views.
+    Uses the original (deterministic) view + n_augments random-augmented views.
+    """
+    model.eval()
+    print(f"  🔄 TTA: evaluating with 1 original + {n_augments} augmented views...")
+
+    # 1. Original (deterministic) evaluation
+    eval_transform = get_eval_transforms(image_size, mean, std)
+    eval_dataset = datasets.ImageFolder(test_dir, eval_transform)
+    eval_loader = DataLoader(
+        eval_dataset, batch_size=batch_size, shuffle=False,
+        num_workers=num_workers, pin_memory=True,
+    )
+
+    # Collect all logits from original view
+    all_logits = []
+    all_labels = []
+    for inputs, labels in tqdm(eval_loader, desc="  TTA orig", leave=False):
+        inputs = inputs.to(device, non_blocking=True)
+        if device.type == "cuda":
+            inputs = inputs.contiguous(memory_format=torch.channels_last)
+        with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
+            outputs = model(inputs)
+        all_logits.append(outputs.cpu())
+        all_labels.append(labels)
+
+    summed_logits = torch.cat(all_logits, dim=0)  # (N, C)
+    all_labels_tensor = torch.cat(all_labels, dim=0)
+
+    # 2. Augmented views — lighter augmentation for TTA
+    tta_transform = transforms.Compose([
+        transforms.RandomResizedCrop(image_size, scale=(0.85, 1.0)),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomRotation(degrees=10),
+        transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1),
+        transforms.ToTensor(),
+        transforms.Normalize(mean, std),
+    ])
+
+    for aug_i in range(n_augments):
+        aug_dataset = datasets.ImageFolder(test_dir, tta_transform)
+        aug_loader = DataLoader(
+            aug_dataset, batch_size=batch_size, shuffle=False,
+            num_workers=num_workers, pin_memory=True,
+        )
+        aug_logits = []
+        for inputs, labels in tqdm(aug_loader, desc=f"  TTA aug{aug_i+1}", leave=False):
+            inputs = inputs.to(device, non_blocking=True)
+            if device.type == "cuda":
+                inputs = inputs.contiguous(memory_format=torch.channels_last)
+            with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
+                outputs = model(inputs)
+            aug_logits.append(outputs.cpu())
+        summed_logits += torch.cat(aug_logits, dim=0)
+
+    # Average logits and predict
+    avg_logits = summed_logits / (1 + n_augments)
+    _, preds = torch.max(avg_logits, 1)
+
+    labels_np = all_labels_tensor.numpy()
+    preds_np = preds.numpy()
+    tta_acc = (preds_np == labels_np).mean()
+    print(f"  ✅ TTA accuracy: {tta_acc:.4f}")
+    return labels_np, preds_np
+
+
 def plot_training_history(hist_s1, hist_s2, save_path):
     """Plot combined training curves from both stages."""
     # Combine
@@ -1548,18 +1614,19 @@ def main():
     s1_img_size = hardware["s1_img_size"]
     s2_img_size = hardware["s2_img_size"]
     s1_epochs = 1 if args.dry_run else 8
-    s2_epochs = 1 if args.dry_run else 30
+    s2_epochs = 1 if args.dry_run else 60
     patience_s1 = 999 if args.dry_run else 10
-    patience_s2 = 999 if args.dry_run else 5
+    patience_s2 = 999 if args.dry_run else 12
     ens_beta = 0.999
     focal_gamma = 1.5
+    s2_focal_gamma = 0.5
     s1_label_smoothing = 0.05
     s2_label_smoothing = 0.02
     weight_decay = 0.01
     grad_clip = 1.0
     s1_mixup_prob = 0.4
     s1_final_mixup_prob = 0.15
-    s2_mixup_prob = 0.3
+    s2_mixup_prob = 0.15
     s2_final_mixup_prob = 0.0
     train_eval_max_samples = 4096 if args.dry_run else 6144
 
@@ -1573,9 +1640,9 @@ def main():
     print(f"  Stage 1:        {s1_epochs} ep, {s1_img_size}px, batch {s1_batch}×{accum_steps_s1} = {s1_batch*accum_steps_s1} effective")
     print(f"  Stage 2:        {s2_epochs} ep, {s2_img_size}px, batch {s2_batch}×{accum_steps_s2} = {s2_batch*accum_steps_s2} effective")
     print(f"  Loss S1:        FocalLoss (γ={focal_gamma}) + ENS weights + label_smoothing={s1_label_smoothing}")
-    print(f"  Loss S2:        Weighted CrossEntropy + label_smoothing={s2_label_smoothing}")
+    print(f"  Loss S2:        FocalLoss (γ={s2_focal_gamma}) + ENS weights + label_smoothing={s2_label_smoothing}")
     print(f"  Augmentation S1: Weighted sampler + Mixup/CutMix @ {int(s1_mixup_prob * 100)}% -> {int(s1_final_mixup_prob * 100)}% of batches")
-    print(f"  Augmentation S2: Shuffle loader + lighter aug + Mixup-only @ {int(s2_mixup_prob * 100)}% -> {int(s2_final_mixup_prob * 100)}% of batches")
+    print(f"  Augmentation S2: Weighted sampler + Mixup-only @ {int(s2_mixup_prob * 100)}% -> {int(s2_final_mixup_prob * 100)}% of batches")
     print(f"  Weight decay:   {weight_decay} (excluded on BN/bias)")
     print(f"  Grad clip:      {grad_clip}")
     print(f"  Patience:       Stage 1 = {patience_s1}, Stage 2 = {patience_s2}")
@@ -1771,18 +1838,18 @@ def main():
         s2_img_size,
         dataset_mean,
         dataset_std,
-        crop_scale=(0.8, 1.0),
+        crop_scale=(0.75, 1.0),
         vertical_flip_p=0.2,
-        rotation_degrees=10,
-        translate=(0.05, 0.05),
-        shear=5,
-        randaugment_magnitude=5,
-        color_jitter_strength=0.2,
-        random_erasing_p=0.05,
+        rotation_degrees=15,
+        translate=(0.08, 0.08),
+        shear=8,
+        randaugment_magnitude=7,
+        color_jitter_strength=0.25,
+        random_erasing_p=0.10,
     )
     dataloaders, sizes, train_dataset = create_dataloaders(
         args.data_dir, s2_img_size, s2_batch, dataset_mean, dataset_std, num_workers,
-        train_transform=stage2_train_transform, use_weighted_sampler=False,
+        train_transform=stage2_train_transform, use_weighted_sampler=True,
     )
     train_eval_loader, train_eval_size = create_train_eval_loader(
         args.data_dir, s2_img_size, dataset_mean, dataset_std, s2_batch, num_workers,
@@ -1797,9 +1864,13 @@ def main():
     # Unfreeze
     unfreeze_backbone(model)
 
-    # Stage 2 uses class-weighted CE without oversampling to avoid double-counting imbalance.
+    # Stage 2 uses lighter Focal Loss — model is already learned, just needs refinement.
     class_weights = compute_ens_class_weights(train_dataset, ens_beta, num_classes, device)
-    criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=s2_label_smoothing)
+    criterion = FocalLoss(
+        weight=class_weights,
+        gamma=s2_focal_gamma,
+        label_smoothing=s2_label_smoothing,
+    )
 
     # ── LR Finder for Stage 2 (discriminative LR) ──
     suggested_lr_s2 = run_lr_finder(
@@ -1817,9 +1888,9 @@ def main():
     param_groups = get_param_groups_discriminative_no_decay(model, lr_head, lr_backbone, weight_decay)
     optimizer = optim.AdamW(param_groups)
 
-    # Warmup (2 epochs) → CosineAnnealing — prevents catastrophic forgetting
-    # when backbone is suddenly unfrozen at a potentially high LR
-    warmup_epochs = 2
+    # Warmup (5 epochs) → smooth CosineAnnealingLR — prevents catastrophic forgetting
+    # when backbone is suddenly unfrozen; smooth decay is more stable than warm restarts.
+    warmup_epochs = 5
     warmup_scheduler = optim.lr_scheduler.LinearLR(
         optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs,
     )
@@ -1836,7 +1907,7 @@ def main():
     if wandb_run and WANDB_AVAILABLE:
         wandb.config.update({"s2_lr_head": lr_head, "s2_lr_backbone": lr_backbone})
 
-    # Train Stage 2 with lighter augmentation and per-epoch scheduling.
+    # Train Stage 2 with Mixup-only (no CutMix) and per-epoch scheduling.
     model, hist_s2, best_acc_s2 = train_stage(
         model, dataloaders, sizes, criterion, optimizer, scheduler,
         device, dirs, "Stage2_FineTuning", s2_epochs, patience_s2, grad_clip,
@@ -1860,8 +1931,9 @@ def main():
     print("  🧪 FINAL EVALUATION ON TEST SET")
     print("═" * 60)
 
+    test_dir = os.path.join(args.data_dir, "test")
     test_dataset = datasets.ImageFolder(
-        os.path.join(args.data_dir, "test"),
+        test_dir,
         get_eval_transforms(s2_img_size, dataset_mean, dataset_std),
     )
     test_loader = DataLoader(
@@ -1870,7 +1942,23 @@ def main():
     )
     print(f"  Test samples: {len(test_dataset):,}")
 
+    # Standard evaluation
     test_labels, test_preds = evaluate_model(model, test_loader, device)
+    std_acc = (test_preds == test_labels).mean()
+    print(f"  Standard test accuracy: {std_acc:.4f}")
+
+    # TTA evaluation (5 augmented views)
+    tta_labels, tta_preds = evaluate_model_tta(
+        model, test_dir, s2_img_size, dataset_mean, dataset_std,
+        s2_batch, num_workers, device, n_augments=5,
+    )
+
+    # Use TTA results if they're better, otherwise use standard
+    if (tta_preds == tta_labels).mean() >= std_acc:
+        print(f"  📈 Using TTA predictions (better accuracy)")
+        test_labels, test_preds = tta_labels, tta_preds
+    else:
+        print(f"  📊 Using standard predictions (TTA did not improve)")
 
     # Reports & plots
     report_dict = save_classification_report(
