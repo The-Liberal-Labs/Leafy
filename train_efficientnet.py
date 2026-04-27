@@ -39,6 +39,7 @@ import time
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -60,6 +61,7 @@ from tqdm import tqdm
 
 try:
     import wandb
+
     WANDB_AVAILABLE = True
 except ImportError:
     print("[WARN] wandb not installed. Run: pip install wandb")
@@ -67,6 +69,7 @@ except ImportError:
 
 try:
     from torch_lr_finder import LRFinder
+
     LR_FINDER_AVAILABLE = True
 except ImportError:
     print("[WARN] torch-lr-finder not installed. Run: pip install torch-lr-finder")
@@ -76,6 +79,7 @@ except ImportError:
 # ======================================================================
 #                        CUDA DIAGNOSTICS
 # ======================================================================
+
 
 def print_cuda_diagnostics():
     """Print comprehensive CUDA runtime diagnostics."""
@@ -87,7 +91,9 @@ def print_cuda_diagnostics():
     print(f"  Platform:      {platform.system()} {platform.release()}")
     print(f"  PyTorch:       {torch.__version__}")
     print(f"  CUDA built:    {torch.version.cuda or 'N/A'}")
-    print(f"  cuDNN:         {torch.backends.cudnn.version() if torch.backends.cudnn.is_available() else 'N/A'}")
+    print(
+        f"  cuDNN:         {torch.backends.cudnn.version() if torch.backends.cudnn.is_available() else 'N/A'}"
+    )
     print(f"  cuDNN enabled: {torch.backends.cudnn.enabled}")
 
     if torch.cuda.is_available():
@@ -120,6 +126,7 @@ def print_cuda_diagnostics():
 #                    REPRODUCIBILITY
 # ======================================================================
 
+
 def seed_everything(seed=42):
     """Seed all random generators for reproducibility."""
     random.seed(seed)
@@ -148,7 +155,11 @@ def configure_runtime(device):
 def get_system_memory_gb():
     """Best-effort detection of system RAM in GB without extra dependencies."""
     try:
-        if hasattr(os, "sysconf") and "SC_PAGE_SIZE" in os.sysconf_names and "SC_PHYS_PAGES" in os.sysconf_names:
+        if (
+            hasattr(os, "sysconf")
+            and "SC_PAGE_SIZE" in os.sysconf_names
+            and "SC_PHYS_PAGES" in os.sysconf_names
+        ):
             page_size = os.sysconf("SC_PAGE_SIZE")
             phys_pages = os.sysconf("SC_PHYS_PAGES")
             return (page_size * phys_pages) / 1e9
@@ -172,11 +183,13 @@ def get_system_memory_gb():
 #                      LOGGING (tee to file)
 # ======================================================================
 
+
 class TeeLogger:
     """
     Duplicates stdout to both console and a log file.
     All print() output is captured automatically.
     """
+
     def __init__(self, log_path):
         self.terminal = sys.stdout
         self.log_file = open(log_path, "w", encoding="utf-8")
@@ -200,6 +213,7 @@ class TeeLogger:
 #                    FOLDER STRUCTURE
 # ======================================================================
 
+
 def create_output_dirs(base_name="EfficientNetV2S"):
     """
     Create a clean output folder structure:
@@ -214,7 +228,7 @@ def create_output_dirs(base_name="EfficientNetV2S"):
         "base": base,
         "images": base / "images",
         "models": base / "models",
-        "logs":   base / "logs",
+        "logs": base / "logs",
     }
     for d in dirs.values():
         d.mkdir(parents=True, exist_ok=True)
@@ -226,11 +240,47 @@ def create_output_dirs(base_name="EfficientNetV2S"):
     return dirs
 
 
+ARCHITECTURE_SPECS = {
+    "efficientnet_v2_s": {
+        "label": "EfficientNet-V2-S",
+        "output_dir": "EfficientNetV2S",
+        "builder": models.efficientnet_v2_s,
+        "weights": models.EfficientNet_V2_S_Weights.IMAGENET1K_V1,
+    },
+    "efficientnet_b0": {
+        "label": "EfficientNet-B0",
+        "output_dir": "EfficientNetB0",
+        "builder": models.efficientnet_b0,
+        "weights": models.EfficientNet_B0_Weights.IMAGENET1K_V1,
+    },
+    "mobilenet_v3_large": {
+        "label": "MobileNet-V3-Large",
+        "output_dir": "MobileNetV3Large",
+        "builder": models.mobilenet_v3_large,
+        "weights": models.MobileNet_V3_Large_Weights.IMAGENET1K_V2,
+    },
+    "convnext_tiny": {
+        "label": "ConvNeXt-Tiny",
+        "output_dir": "ConvNeXtTiny",
+        "builder": models.convnext_tiny,
+        "weights": models.ConvNeXt_Tiny_Weights.IMAGENET1K_V1,
+    },
+}
+
+
+def get_architecture_spec(architecture):
+    if architecture not in ARCHITECTURE_SPECS:
+        raise ValueError(f"Unsupported architecture: {architecture}")
+    return ARCHITECTURE_SPECS[architecture]
+
+
 def get_hardware_profile(device, requested_profile="auto", colab=False):
     """Return batch sizes and image sizes tuned for the current hardware."""
     cpu_count = os.cpu_count() or 2
     system_ram_gb = get_system_memory_gb()
-    worker_cap_from_ram = max(2, min(8, int(system_ram_gb // 2))) if system_ram_gb > 0 else 4
+    worker_cap_from_ram = (
+        max(2, min(8, int(system_ram_gb // 2))) if system_ram_gb > 0 else 4
+    )
     base_workers = max(2, min(cpu_count // 2, worker_cap_from_ram))
     profiles = {
         "cpu": {
@@ -371,6 +421,7 @@ def resolve_run_config(args, device):
 #           DATASET ANALYSIS & PREPROCESSING
 # ======================================================================
 
+
 def analyze_dataset(data_dir):
     """
     Auto-detect NUM_CLASSES, print class distribution,
@@ -386,30 +437,47 @@ def analyze_dataset(data_dir):
             f"Run `python prepare_data.py` first to create train/val/test splits."
         )
 
-    class_names = sorted([
-        d for d in os.listdir(train_dir)
-        if os.path.isdir(os.path.join(train_dir, d)) and not d.startswith('.')
-    ])
+    class_names = sorted(
+        [
+            d
+            for d in os.listdir(train_dir)
+            if os.path.isdir(os.path.join(train_dir, d)) and not d.startswith(".")
+        ]
+    )
     num_classes = len(class_names)
 
     # Count images per class
     train_counts = {}
     for cls in class_names:
         cls_path = os.path.join(train_dir, cls)
-        count = len([f for f in os.listdir(cls_path) if os.path.isfile(os.path.join(cls_path, f))])
+        count = len(
+            [
+                f
+                for f in os.listdir(cls_path)
+                if os.path.isfile(os.path.join(cls_path, f))
+            ]
+        )
         train_counts[cls] = count
 
     total_train = sum(train_counts.values())
-    total_val = sum(
-        len(os.listdir(os.path.join(val_dir, c)))
-        for c in os.listdir(val_dir)
-        if os.path.isdir(os.path.join(val_dir, c))
-    ) if os.path.isdir(val_dir) else 0
-    total_test = sum(
-        len(os.listdir(os.path.join(test_dir, c)))
-        for c in os.listdir(test_dir)
-        if os.path.isdir(os.path.join(test_dir, c))
-    ) if os.path.isdir(test_dir) else 0
+    total_val = (
+        sum(
+            len(os.listdir(os.path.join(val_dir, c)))
+            for c in os.listdir(val_dir)
+            if os.path.isdir(os.path.join(val_dir, c))
+        )
+        if os.path.isdir(val_dir)
+        else 0
+    )
+    total_test = (
+        sum(
+            len(os.listdir(os.path.join(test_dir, c)))
+            for c in os.listdir(test_dir)
+            if os.path.isdir(os.path.join(test_dir, c))
+        )
+        if os.path.isdir(test_dir)
+        else 0
+    )
 
     print(f"\n  📊 DATASET ANALYSIS")
     print(f"  {'─' * 40}")
@@ -425,7 +493,7 @@ def analyze_dataset(data_dir):
     print(f"    Max:    {max(counts):>5}  ({class_names[np.argmax(counts)]})")
     print(f"    Mean:   {np.mean(counts):>7.0f}")
     print(f"    Median: {np.median(counts):>7.0f}")
-    print(f"    Ratio (max/min): {max(counts)/max(min(counts),1):.0f}x imbalance")
+    print(f"    Ratio (max/min): {max(counts) / max(min(counts), 1):.0f}x imbalance")
 
     # Show bottom 10 and top 10 classes
     sorted_pairs = sorted(train_counts.items(), key=lambda x: x[1])
@@ -439,6 +507,35 @@ def analyze_dataset(data_dir):
     return class_names, num_classes, train_counts
 
 
+def save_dataset_summary(train_counts, class_names, save_path):
+    """Persist dataset summary for reproducibility and cleanup tracking."""
+    counts = [train_counts[name] for name in class_names]
+    summary = {
+        "num_classes": len(class_names),
+        "total_train_images": int(sum(counts)),
+        "min_count": int(min(counts)),
+        "max_count": int(max(counts)),
+        "mean_count": float(np.mean(counts)),
+        "median_count": float(np.median(counts)),
+        "imbalance_ratio": float(max(counts) / max(min(counts), 1)),
+        "bottom_classes": [
+            {"class_name": name, "count": int(count)}
+            for name, count in sorted(train_counts.items(), key=lambda item: item[1])[
+                :15
+            ]
+        ],
+        "top_classes": [
+            {"class_name": name, "count": int(count)}
+            for name, count in sorted(train_counts.items(), key=lambda item: item[1])[
+                -15:
+            ]
+        ],
+    }
+    with open(save_path, "w", encoding="utf-8") as file_obj:
+        json.dump(summary, file_obj, indent=2)
+    print(f"  Dataset summary saved: {save_path}")
+
+
 def plot_class_distribution(train_counts, class_names, save_path):
     """Plot and save class distribution bar chart."""
     counts = [train_counts[c] for c in class_names]
@@ -450,7 +547,9 @@ def plot_class_distribution(train_counts, class_names, save_path):
     sorted_names = [class_names[i] for i in sorted_indices]
     sorted_colors = [colors[i] for i in range(len(sorted_indices))]
 
-    bars = ax.barh(range(len(sorted_counts)), sorted_counts, color=sorted_colors, edgecolor="none")
+    bars = ax.barh(
+        range(len(sorted_counts)), sorted_counts, color=sorted_colors, edgecolor="none"
+    )
 
     ax.set_yticks(range(len(sorted_names)))
     ax.set_yticklabels(sorted_names, fontsize=6)
@@ -460,7 +559,13 @@ def plot_class_distribution(train_counts, class_names, save_path):
 
     # Mark median line
     median_val = np.median(sorted_counts)
-    ax.axvline(x=median_val, color="red", linestyle="--", alpha=0.7, label=f"Median: {median_val:.0f}")
+    ax.axvline(
+        x=median_val,
+        color="red",
+        linestyle="--",
+        alpha=0.7,
+        label=f"Median: {median_val:.0f}",
+    )
     ax.legend(fontsize=10)
 
     plt.tight_layout()
@@ -496,24 +601,26 @@ def compute_dataset_stats(data_dir, sample_size=5000):
     pixel_sq_sum = np.zeros(3, dtype=np.float64)
     pixel_count = 0
 
-    transform = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
-        transforms.ToTensor(),
-    ])
+    transform = transforms.Compose(
+        [
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+        ]
+    )
 
     for fpath in tqdm(sampled, desc="  Stats", leave=False):
         try:
             img = Image.open(fpath).convert("RGB")
             t = transform(img).numpy()  # (3, H, W)
             pixel_sum += t.sum(axis=(1, 2))
-            pixel_sq_sum += (t ** 2).sum(axis=(1, 2))
+            pixel_sq_sum += (t**2).sum(axis=(1, 2))
             pixel_count += t.shape[1] * t.shape[2]
         except Exception:
             continue
 
     mean = pixel_sum / pixel_count
-    std = np.sqrt(pixel_sq_sum / pixel_count - mean ** 2)
+    std = np.sqrt(pixel_sq_sum / pixel_count - mean**2)
 
     print(f"  Dataset mean: [{mean[0]:.4f}, {mean[1]:.4f}, {mean[2]:.4f}]")
     print(f"  Dataset std:  [{std[0]:.4f}, {std[1]:.4f}, {std[2]:.4f}]")
@@ -523,6 +630,7 @@ def compute_dataset_stats(data_dir, sample_size=5000):
 # ======================================================================
 #                DATA TRANSFORMS & LOADERS
 # ======================================================================
+
 
 def get_train_transforms(
     image_size,
@@ -544,50 +652,55 @@ def get_train_transforms(
     Best-practice training augmentation pipeline for plant pathology.
     Includes geometric, color, and erasing augmentations.
     """
-    return transforms.Compose([
-        # Geometric
-        transforms.RandomResizedCrop(image_size, scale=crop_scale, ratio=ratio),
-        transforms.RandomHorizontalFlip(p=horizontal_flip_p),
-        transforms.RandomVerticalFlip(p=vertical_flip_p),
-        transforms.RandomRotation(degrees=rotation_degrees),
-        transforms.RandomAffine(degrees=0, translate=translate, shear=shear),
-
-        # Color / Auto-augment
-        transforms.RandAugment(num_ops=randaugment_num_ops, magnitude=randaugment_magnitude),
-        transforms.ColorJitter(
-            brightness=color_jitter_strength,
-            contrast=color_jitter_strength,
-            saturation=color_jitter_strength,
-            hue=min(0.05, color_jitter_strength / 6),
-        ),
-
-        # To tensor + normalize with DATASET-SPECIFIC stats
-        transforms.ToTensor(),
-        transforms.Normalize(mean, std),
-
-        # Regularization
-        transforms.RandomErasing(p=random_erasing_p, scale=(0.02, 0.2), ratio=(0.3, 3.3)),
-    ])
+    return transforms.Compose(
+        [
+            # Geometric
+            transforms.RandomResizedCrop(image_size, scale=crop_scale, ratio=ratio),
+            transforms.RandomHorizontalFlip(p=horizontal_flip_p),
+            transforms.RandomVerticalFlip(p=vertical_flip_p),
+            transforms.RandomRotation(degrees=rotation_degrees),
+            transforms.RandomAffine(degrees=0, translate=translate, shear=shear),
+            # Color / Auto-augment
+            transforms.RandAugment(
+                num_ops=randaugment_num_ops, magnitude=randaugment_magnitude
+            ),
+            transforms.ColorJitter(
+                brightness=color_jitter_strength,
+                contrast=color_jitter_strength,
+                saturation=color_jitter_strength,
+                hue=min(0.05, color_jitter_strength / 6),
+            ),
+            # To tensor + normalize with DATASET-SPECIFIC stats
+            transforms.ToTensor(),
+            transforms.Normalize(mean, std),
+            # Regularization
+            transforms.RandomErasing(
+                p=random_erasing_p, scale=(0.02, 0.2), ratio=(0.3, 3.3)
+            ),
+        ]
+    )
 
 
 def get_eval_transforms(image_size, mean, std):
     """Deterministic eval/test transforms."""
-    return transforms.Compose([
-        transforms.Resize(image_size + 32),
-        transforms.CenterCrop(image_size),
-        transforms.ToTensor(),
-        transforms.Normalize(mean, std),
-    ])
+    return transforms.Compose(
+        [
+            transforms.Resize(image_size + 32),
+            transforms.CenterCrop(image_size),
+            transforms.ToTensor(),
+            transforms.Normalize(mean, std),
+        ]
+    )
 
 
-def plot_augmented_samples(dataset, class_names, save_path, n=16):
+def plot_augmented_samples(dataset, class_names, mean, std, save_path, n=16):
     """Show augmented training samples to verify preprocessing quality."""
     fig, axes = plt.subplots(4, 4, figsize=(16, 16))
     fig.suptitle("Augmented Training Samples", fontsize=16, fontweight="bold")
 
     indices = random.sample(range(len(dataset)), min(n, len(dataset)))
-    mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
-    std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+    mean = torch.tensor(mean).view(3, 1, 1)
+    std = torch.tensor(std).view(3, 1, 1)
 
     for idx, ax_idx in zip(indices, range(n)):
         img, label = dataset[idx]
@@ -609,7 +722,9 @@ def plot_augmented_samples(dataset, class_names, save_path, n=16):
 def create_weighted_sampler(dataset):
     """WeightedRandomSampler for class imbalance."""
     targets = [s[1] for s in dataset.samples]
-    class_counts = np.bincount(targets, minlength=len(dataset.classes)).astype(np.float64)
+    class_counts = np.bincount(targets, minlength=len(dataset.classes)).astype(
+        np.float64
+    )
 
     # Inverse frequency
     class_weights = 1.0 / (class_counts + 1e-6)
@@ -660,19 +775,31 @@ def create_dataloaders(
     sampler = create_weighted_sampler(train_dataset) if use_weighted_sampler else None
 
     train_loader = DataLoader(
-        train_dataset, batch_size=batch_size, sampler=sampler, shuffle=(sampler is None),
-        num_workers=num_workers, pin_memory=True, persistent_workers=True, drop_last=True,
+        train_dataset,
+        batch_size=batch_size,
+        sampler=sampler,
+        shuffle=(sampler is None),
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=True,
+        drop_last=True,
     )
     val_loader = DataLoader(
-        val_dataset, batch_size=batch_size, shuffle=False,
-        num_workers=num_workers, pin_memory=True, persistent_workers=True,
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=True,
     )
 
     sizes = {"train": len(train_dataset), "val": len(val_dataset)}
     return {"train": train_loader, "val": val_loader}, sizes, train_dataset
 
 
-def create_train_eval_loader(data_dir, image_size, mean, std, batch_size, num_workers, max_samples=4096):
+def create_train_eval_loader(
+    data_dir, image_size, mean, std, batch_size, num_workers, max_samples=4096
+):
     """Create a deterministic training-subset loader for apples-to-apples train/val comparison."""
     train_eval_dataset = datasets.ImageFolder(
         os.path.join(data_dir, "train"),
@@ -681,7 +808,9 @@ def create_train_eval_loader(data_dir, image_size, mean, std, batch_size, num_wo
 
     if max_samples and len(train_eval_dataset) > max_samples:
         rng = np.random.default_rng(42)
-        indices = np.sort(rng.choice(len(train_eval_dataset), size=max_samples, replace=False))
+        indices = np.sort(
+            rng.choice(len(train_eval_dataset), size=max_samples, replace=False)
+        )
         train_eval_dataset = Subset(train_eval_dataset, indices.tolist())
 
     train_eval_loader = DataLoader(
@@ -703,12 +832,14 @@ def create_train_eval_loader(data_dir, image_size, mean, std, batch_size, num_wo
 #                        FOCAL LOSS
 # ======================================================================
 
+
 class FocalLoss(nn.Module):
     """
     Focal Loss — focuses training on hard, misclassified samples.
     Excellent for severely imbalanced datasets.
     FL(p_t) = -alpha_t * (1 - p_t)^gamma * log(p_t)
     """
+
     def __init__(self, weight=None, gamma=2.0, label_smoothing=0.1, reduction="mean"):
         super().__init__()
         self.gamma = gamma
@@ -716,7 +847,9 @@ class FocalLoss(nn.Module):
         self.reduction = reduction
         self.register_buffer("weight", weight)
         self.ce = nn.CrossEntropyLoss(
-            weight=weight, reduction="none", label_smoothing=label_smoothing,
+            weight=weight,
+            reduction="none",
+            label_smoothing=label_smoothing,
         )
 
     def forward(self, inputs, targets):
@@ -738,6 +871,7 @@ class FocalLoss(nn.Module):
 # ======================================================================
 #                        MIXUP / CUTMIX
 # ======================================================================
+
 
 def mixup_data(x, y, alpha=0.4):
     """Mixup: blend two random samples."""
@@ -794,25 +928,41 @@ def soft_mix_accuracy(preds, targets_a, targets_b, lam):
 #                          MODEL
 # ======================================================================
 
-def build_model(num_classes, device):
-    """EfficientNet-V2-S with a stronger custom head."""
-    print("\n  Loading EfficientNet-V2-S (ImageNet pretrained)...")
-    model = models.efficientnet_v2_s(weights=models.EfficientNet_V2_S_Weights.IMAGENET1K_V1)
+
+def build_model(architecture, num_classes, device):
+    """Build a supported torchvision backbone with a task-specific classifier head."""
+    spec = get_architecture_spec(architecture)
+    print(f"\n  Loading {spec['label']} (ImageNet pretrained)...")
+    model = spec["builder"](weights=spec["weights"])
 
     # Freeze backbone
     for param in model.features.parameters():
         param.requires_grad = False
 
-    # Simplified head — single bottleneck for better gradient flow with 100+ classes
-    in_features = model.classifier[1].in_features  # 1280
-    model.classifier = nn.Sequential(
-        nn.Dropout(p=0.3),
-        nn.Linear(in_features, 512),
-        nn.BatchNorm1d(512),
-        nn.SiLU(inplace=True),
-        nn.Dropout(p=0.1),
-        nn.Linear(512, num_classes),
-    )
+    if architecture in {"efficientnet_v2_s", "efficientnet_b0"}:
+        in_features = model.classifier[1].in_features
+        model.classifier = nn.Sequential(
+            nn.Dropout(p=0.3),
+            nn.Linear(in_features, 512),
+            nn.BatchNorm1d(512),
+            nn.SiLU(inplace=True),
+            nn.Dropout(p=0.1),
+            nn.Linear(512, num_classes),
+        )
+    elif architecture == "mobilenet_v3_large":
+        stem_features = model.classifier[0].in_features
+        hidden_features = model.classifier[0].out_features
+        model.classifier = nn.Sequential(
+            nn.Linear(stem_features, hidden_features),
+            nn.Hardswish(inplace=True),
+            nn.Dropout(p=0.2),
+            nn.Linear(hidden_features, num_classes),
+        )
+    elif architecture == "convnext_tiny":
+        in_features = model.classifier[-1].in_features
+        model.classifier[-1] = nn.Linear(in_features, num_classes)
+
+    model._leafy_architecture = architecture
 
     model = model.to(device)
     if device.type == "cuda":
@@ -821,7 +971,9 @@ def build_model(num_classes, device):
 
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model.parameters())
-    print(f"  Params: {trainable:,} trainable / {total:,} total ({100*trainable/total:.1f}%)")
+    print(
+        f"  Params: {trainable:,} trainable / {total:,} total ({100 * trainable / total:.1f}%)"
+    )
 
     return model
 
@@ -832,7 +984,9 @@ def unfreeze_backbone(model):
         param.requires_grad = True
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model.parameters())
-    print(f"  🔓 Backbone unfrozen: {trainable:,} / {total:,} params trainable ({100*trainable/total:.1f}%)")
+    print(
+        f"  🔓 Backbone unfrozen: {trainable:,} / {total:,} params trainable ({100 * trainable / total:.1f}%)"
+    )
 
 
 def get_param_groups(model, lr_head, lr_backbone):
@@ -854,12 +1008,19 @@ def get_param_groups_no_decay(model, lr, weight_decay):
         if not param.requires_grad:
             continue
         # Exclude BN weights, BN biases, and all biases from weight decay
-        if "bn" in name or "batch" in name.lower() or "bias" in name:
+        if (
+            "bn" in name
+            or "batch" in name.lower()
+            or "norm" in name.lower()
+            or "bias" in name
+        ):
             no_decay_params.append(param)
         else:
             decay_params.append(param)
 
-    print(f"  Weight decay groups: {len(decay_params)} with decay, {len(no_decay_params)} without")
+    print(
+        f"  Weight decay groups: {len(decay_params)} with decay, {len(no_decay_params)} without"
+    )
     return [
         {"params": decay_params, "lr": lr, "weight_decay": weight_decay},
         {"params": no_decay_params, "lr": lr, "weight_decay": 0.0},
@@ -877,7 +1038,12 @@ def get_param_groups_discriminative_no_decay(model, lr_head, lr_backbone, weight
     for name, param in model.named_parameters():
         if not param.requires_grad:
             continue
-        is_no_decay = ("bn" in name or "batch" in name.lower() or "bias" in name)
+        is_no_decay = (
+            "bn" in name
+            or "batch" in name.lower()
+            or "norm" in name.lower()
+            or "bias" in name
+        )
         if name.startswith("features") or name.startswith("_orig_mod.features"):
             if is_no_decay:
                 backbone_no_decay.append(param)
@@ -889,7 +1055,9 @@ def get_param_groups_discriminative_no_decay(model, lr_head, lr_backbone, weight
             else:
                 head_decay.append(param)
 
-    print(f"  Param groups: backbone({len(backbone_decay)}+{len(backbone_no_decay)}), head({len(head_decay)}+{len(head_no_decay)})")
+    print(
+        f"  Param groups: backbone({len(backbone_decay)}+{len(backbone_no_decay)}), head({len(head_decay)}+{len(head_no_decay)})"
+    )
     return [
         {"params": backbone_decay, "lr": lr_backbone, "weight_decay": weight_decay},
         {"params": backbone_no_decay, "lr": lr_backbone, "weight_decay": 0.0},
@@ -913,8 +1081,17 @@ def try_compile(model):
 #                        LR FINDER
 # ======================================================================
 
-def run_lr_finder(model, train_loader, criterion, device, save_path,
-                  start_lr=1e-7, end_lr=10, num_iter=200):
+
+def run_lr_finder(
+    model,
+    train_loader,
+    criterion,
+    device,
+    save_path,
+    start_lr=1e-7,
+    end_lr=10,
+    num_iter=200,
+):
     """
     Run the LR range test, save the plot, and return the suggested LR.
     Uses the torch-lr-finder library for a proper implementation.
@@ -923,7 +1100,9 @@ def run_lr_finder(model, train_loader, criterion, device, save_path,
         print("  ⚠️  torch-lr-finder not available. Using default LR.")
         return 1e-3
 
-    print(f"\n  🔍 Running LR Finder ({num_iter} iterations, LR: {start_lr:.0e} → {end_lr:.0e})...")
+    print(
+        f"\n  🔍 Running LR Finder ({num_iter} iterations, LR: {start_lr:.0e} → {end_lr:.0e})..."
+    )
 
     # Move original model to CPU to free GPU memory for the finder copy
     model.cpu()
@@ -958,6 +1137,7 @@ def run_lr_finder(model, train_loader, criterion, device, save_path,
     # Find the LR with steepest negative gradient (best practice)
     # Smooth the loss curve first
     from scipy.ndimage import uniform_filter1d
+
     try:
         smoothed = uniform_filter1d(losses, size=5)
         gradients = np.gradient(smoothed)
@@ -977,8 +1157,13 @@ def run_lr_finder(model, train_loader, criterion, device, save_path,
 
     # Loss vs LR
     ax1.plot(lrs, losses, color="steelblue", linewidth=1.5)
-    ax1.axvline(x=suggested_lr, color="red", linestyle="--", linewidth=2,
-                label=f"Suggested LR: {suggested_lr:.2e}")
+    ax1.axvline(
+        x=suggested_lr,
+        color="red",
+        linestyle="--",
+        linewidth=2,
+        label=f"Suggested LR: {suggested_lr:.2e}",
+    )
     ax1.set_xscale("log")
     ax1.set_xlabel("Learning Rate (log scale)", fontsize=11)
     ax1.set_ylabel("Loss", fontsize=11)
@@ -989,8 +1174,13 @@ def run_lr_finder(model, train_loader, criterion, device, save_path,
     # Loss gradient
     try:
         ax2.plot(lrs[1:], np.gradient(losses)[1:], color="darkorange", linewidth=1.5)
-        ax2.axvline(x=suggested_lr, color="red", linestyle="--", linewidth=2,
-                    label=f"Steepest descent: {suggested_lr:.2e}")
+        ax2.axvline(
+            x=suggested_lr,
+            color="red",
+            linestyle="--",
+            linewidth=2,
+            label=f"Steepest descent: {suggested_lr:.2e}",
+        )
         ax2.set_xscale("log")
         ax2.set_xlabel("Learning Rate (log scale)", fontsize=11)
         ax2.set_ylabel("Loss Gradient (dL/dLR)", fontsize=11)
@@ -1021,10 +1211,22 @@ def run_lr_finder(model, train_loader, criterion, device, save_path,
 #                     TRAINING ENGINE
 # ======================================================================
 
-def train_one_epoch(model, loader, criterion, optimizer, scheduler, scaler, device,
-                    grad_clip, accum_steps=1, use_mixup=True, mixup_prob=0.5,
-                    use_cutmix=True,
-                    step_scheduler_per_batch=True):
+
+def train_one_epoch(
+    model,
+    loader,
+    criterion,
+    optimizer,
+    scheduler,
+    scaler,
+    device,
+    grad_clip,
+    accum_steps=1,
+    use_mixup=True,
+    mixup_prob=0.5,
+    use_cutmix=True,
+    step_scheduler_per_batch=True,
+):
     """
     Train for one epoch with:
     - Gradient accumulation (effective batch = batch_size * accum_steps)
@@ -1047,7 +1249,9 @@ def train_one_epoch(model, loader, criterion, optimizer, scheduler, scaler, devi
         apply_mix = use_mixup and (random.random() < mixup_prob)
         if apply_mix:
             if use_cutmix and random.random() < 0.5:
-                inputs, targets_a, targets_b, lam = mixup_data(inputs, labels, alpha=0.4)
+                inputs, targets_a, targets_b, lam = mixup_data(
+                    inputs, labels, alpha=0.4
+                )
             else:
                 mix_fn = cutmix_data if use_cutmix else mixup_data
                 alpha = 1.0 if use_cutmix else 0.2
@@ -1072,8 +1276,11 @@ def train_one_epoch(model, loader, criterion, optimizer, scheduler, scaler, devi
             optimizer.zero_grad(set_to_none=True)
 
             # Step per-batch schedulers (e.g. CosineAnnealingWarmRestarts)
-            if step_scheduler_per_batch and scheduler is not None \
-                    and not isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
+            if (
+                step_scheduler_per_batch
+                and scheduler is not None
+                and not isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau)
+            ):
                 scheduler.step()
 
         _, preds = torch.max(outputs, 1)
@@ -1115,13 +1322,28 @@ def validate(model, loader, criterion, device):
     return running_loss / total, running_corrects / total
 
 
-def train_stage(model, dataloaders, dataset_sizes, criterion, optimizer, scheduler,
-                device, dirs, stage_name, num_epochs, patience, grad_clip,
-                accum_steps=1, use_mixup=True, mixup_prob=0.5,
-                final_mixup_prob=None,
-                use_cutmix=True,
-                step_scheduler_per_batch=True, wandb_run=None,
-                train_eval_loader=None):
+def train_stage(
+    model,
+    dataloaders,
+    dataset_sizes,
+    criterion,
+    optimizer,
+    scheduler,
+    device,
+    dirs,
+    stage_name,
+    num_epochs,
+    patience,
+    grad_clip,
+    accum_steps=1,
+    use_mixup=True,
+    mixup_prob=0.5,
+    final_mixup_prob=None,
+    use_cutmix=True,
+    step_scheduler_per_batch=True,
+    wandb_run=None,
+    train_eval_loader=None,
+):
     """
     Full training loop for one stage (feature extraction OR fine-tuning).
     Saves checkpoints, CSV logs, and returns (model, history, best_acc).
@@ -1161,7 +1383,9 @@ def train_stage(model, dataloaders, dataset_sizes, criterion, optimizer, schedul
         f"    Label mixing: {aug_label if use_mixup else 'OFF'} "
         f"(prob={mixup_prob:.2f} -> {final_mixup_prob:.2f})"
     )
-    print("    Train accuracy uses soft labels; clean-train eval uses deterministic transforms")
+    print(
+        "    Train accuracy uses soft labels; clean-train eval uses deterministic transforms"
+    )
     print(f"{'═' * 60}")
 
     for epoch in range(num_epochs):
@@ -1170,14 +1394,25 @@ def train_stage(model, dataloaders, dataset_sizes, criterion, optimizer, schedul
         current_mixup_prob = mixup_prob + (final_mixup_prob - mixup_prob) * progress
 
         train_loss, train_acc = train_one_epoch(
-            model, dataloaders["train"], criterion, optimizer, scheduler, scaler, device,
-            grad_clip, accum_steps=accum_steps, use_mixup=use_mixup, mixup_prob=current_mixup_prob,
+            model,
+            dataloaders["train"],
+            criterion,
+            optimizer,
+            scheduler,
+            scaler,
+            device,
+            grad_clip,
+            accum_steps=accum_steps,
+            use_mixup=use_mixup,
+            mixup_prob=current_mixup_prob,
             use_cutmix=use_cutmix,
             step_scheduler_per_batch=step_scheduler_per_batch,
         )
         train_clean_loss, train_clean_acc = (None, None)
         if train_eval_loader is not None:
-            train_clean_loss, train_clean_acc = validate(model, train_eval_loader, criterion, device)
+            train_clean_loss, train_clean_acc = validate(
+                model, train_eval_loader, criterion, device
+            )
         val_loss, val_acc = validate(model, dataloaders["val"], criterion, device)
 
         # Get current LR (from head param group if multiple)
@@ -1201,8 +1436,12 @@ def train_stage(model, dataloaders, dataset_sizes, criterion, optimizer, schedul
         history["lr"].append(current_lr)
 
         # GPU memory usage
-        gpu_mem = torch.cuda.memory_allocated() / 1e9 if torch.cuda.is_available() else 0
-        gpu_max = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0
+        gpu_mem = (
+            torch.cuda.memory_allocated() / 1e9 if torch.cuda.is_available() else 0
+        )
+        gpu_max = (
+            torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else 0
+        )
 
         # Overfitting detection
         compare_acc = train_clean_acc if train_clean_acc is not None else train_acc
@@ -1212,34 +1451,48 @@ def train_stage(model, dataloaders, dataset_sizes, criterion, optimizer, schedul
         # Print
         clean_train_str = (
             f"  ClLoss {train_clean_loss:.4f}  ClAcc {train_clean_acc:.4f} │"
-            if train_clean_acc is not None else ""
+            if train_clean_acc is not None
+            else ""
         )
-        print(f"  Ep {epoch+1:02d}/{num_epochs} │ "
-              f"TrLoss {train_loss:.4f}  TrAcc {train_acc:.4f} │"
-              f"{clean_train_str} "
-              f"VaLoss {val_loss:.4f}  VaAcc {val_acc:.4f} │ "
-              f"LR {current_lr:.2e} │ GPU {gpu_mem:.1f}/{gpu_max:.1f}GB │ {dt:.0f}s{overfit_flag}")
+        print(
+            f"  Ep {epoch + 1:02d}/{num_epochs} │ "
+            f"TrLoss {train_loss:.4f}  TrAcc {train_acc:.4f} │"
+            f"{clean_train_str} "
+            f"VaLoss {val_loss:.4f}  VaAcc {val_acc:.4f} │ "
+            f"LR {current_lr:.2e} │ GPU {gpu_mem:.1f}/{gpu_max:.1f}GB │ {dt:.0f}s{overfit_flag}"
+        )
 
         # W&B
         if wandb_run and WANDB_AVAILABLE:
-            wandb.log({
-                f"{stage_name}/train_loss": train_loss,
-                f"{stage_name}/train_acc": train_acc,
-                f"{stage_name}/train_clean_loss": train_clean_loss,
-                f"{stage_name}/train_clean_acc": train_clean_acc,
-                f"{stage_name}/val_loss": val_loss,
-                f"{stage_name}/val_acc": val_acc,
-                f"{stage_name}/lr": current_lr,
-                f"{stage_name}/mixup_prob": current_mixup_prob,
-            })
+            wandb.log(
+                {
+                    f"{stage_name}/train_loss": train_loss,
+                    f"{stage_name}/train_acc": train_acc,
+                    f"{stage_name}/train_clean_loss": train_clean_loss,
+                    f"{stage_name}/train_clean_acc": train_clean_acc,
+                    f"{stage_name}/val_loss": val_loss,
+                    f"{stage_name}/val_acc": val_acc,
+                    f"{stage_name}/lr": current_lr,
+                    f"{stage_name}/mixup_prob": current_mixup_prob,
+                }
+            )
 
         # CSV log
-        row = pd.DataFrame([{
-            "epoch": epoch + 1, "train_loss": train_loss, "train_acc": train_acc,
-            "train_clean_loss": train_clean_loss, "train_clean_acc": train_clean_acc,
-            "val_loss": val_loss, "val_acc": val_acc, "lr": current_lr,
-            "mixup_prob": current_mixup_prob,
-        }])
+        row = pd.DataFrame(
+            [
+                {
+                    "epoch": epoch + 1,
+                    "train_loss": train_loss,
+                    "train_acc": train_acc,
+                    "train_clean_loss": train_clean_loss,
+                    "train_clean_acc": train_clean_acc,
+                    "val_loss": val_loss,
+                    "val_acc": val_acc,
+                    "lr": current_lr,
+                    "mixup_prob": current_mixup_prob,
+                }
+            ]
+        )
         row.to_csv(log_path, mode="a", header=not log_path.exists(), index=False)
 
         # Checkpoint + early stopping
@@ -1248,19 +1501,26 @@ def train_stage(model, dataloaders, dataset_sizes, criterion, optimizer, schedul
             epochs_no_improve = 0
             raw = model._orig_mod if hasattr(model, "_orig_mod") else model
             best_model_wts = copy.deepcopy(raw.state_dict())
-            torch.save({
-                "epoch": epoch,
-                "model_state_dict": best_model_wts,
-                "optimizer_state_dict": optimizer.state_dict(),
-                "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
-                "accuracy": best_acc,
-                "val_loss": val_loss,
-            }, checkpoint_path)
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "model_state_dict": best_model_wts,
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "scheduler_state_dict": scheduler.state_dict()
+                    if scheduler
+                    else None,
+                    "accuracy": best_acc,
+                    "val_loss": val_loss,
+                },
+                checkpoint_path,
+            )
             print(f"            ✅ Best model saved! Val Acc: {best_acc:.4f}")
         else:
             epochs_no_improve += 1
             if epochs_no_improve >= patience:
-                print(f"  ⛔ Early stopping at epoch {epoch+1} (no improvement for {patience} epochs)")
+                print(
+                    f"  ⛔ Early stopping at epoch {epoch + 1} (no improvement for {patience} epochs)"
+                )
                 break
 
     # Restore best
@@ -1275,6 +1535,7 @@ def train_stage(model, dataloaders, dataset_sizes, criterion, optimizer, schedul
 # ======================================================================
 #                     EVALUATION & PLOTS
 # ======================================================================
+
 
 @torch.no_grad()
 def evaluate_model(model, dataloader, device):
@@ -1294,8 +1555,17 @@ def evaluate_model(model, dataloader, device):
 
 
 @torch.no_grad()
-def evaluate_model_tta(model, test_dir, image_size, mean, std, batch_size,
-                       num_workers, device, n_augments=5):
+def evaluate_model_tta(
+    model,
+    test_dir,
+    image_size,
+    mean,
+    std,
+    batch_size,
+    num_workers,
+    device,
+    n_augments=5,
+):
     """
     Test-Time Augmentation: average predictions over multiple augmented views.
     Uses the original (deterministic) view + n_augments random-augmented views.
@@ -1307,8 +1577,11 @@ def evaluate_model_tta(model, test_dir, image_size, mean, std, batch_size,
     eval_transform = get_eval_transforms(image_size, mean, std)
     eval_dataset = datasets.ImageFolder(test_dir, eval_transform)
     eval_loader = DataLoader(
-        eval_dataset, batch_size=batch_size, shuffle=False,
-        num_workers=num_workers, pin_memory=True,
+        eval_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
     )
 
     # Collect all logits from original view
@@ -1327,23 +1600,30 @@ def evaluate_model_tta(model, test_dir, image_size, mean, std, batch_size,
     all_labels_tensor = torch.cat(all_labels, dim=0)
 
     # 2. Augmented views — lighter augmentation for TTA
-    tta_transform = transforms.Compose([
-        transforms.RandomResizedCrop(image_size, scale=(0.85, 1.0)),
-        transforms.RandomHorizontalFlip(p=0.5),
-        transforms.RandomRotation(degrees=10),
-        transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1),
-        transforms.ToTensor(),
-        transforms.Normalize(mean, std),
-    ])
+    tta_transform = transforms.Compose(
+        [
+            transforms.RandomResizedCrop(image_size, scale=(0.85, 1.0)),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomRotation(degrees=10),
+            transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1),
+            transforms.ToTensor(),
+            transforms.Normalize(mean, std),
+        ]
+    )
 
     for aug_i in range(n_augments):
         aug_dataset = datasets.ImageFolder(test_dir, tta_transform)
         aug_loader = DataLoader(
-            aug_dataset, batch_size=batch_size, shuffle=False,
-            num_workers=num_workers, pin_memory=True,
+            aug_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=True,
         )
         aug_logits = []
-        for inputs, labels in tqdm(aug_loader, desc=f"  TTA aug{aug_i+1}", leave=False):
+        for inputs, labels in tqdm(
+            aug_loader, desc=f"  TTA aug{aug_i + 1}", leave=False
+        ):
             inputs = inputs.to(device, non_blocking=True)
             if device.type == "cuda":
                 inputs = inputs.contiguous(memory_format=torch.channels_last)
@@ -1367,10 +1647,14 @@ def plot_training_history(hist_s1, hist_s2, save_path):
     """Plot combined training curves from both stages."""
     # Combine
     train_acc = hist_s1["train_acc"] + hist_s2["train_acc"]
-    train_clean_acc = hist_s1.get("train_clean_acc", []) + hist_s2.get("train_clean_acc", [])
+    train_clean_acc = hist_s1.get("train_clean_acc", []) + hist_s2.get(
+        "train_clean_acc", []
+    )
     val_acc = hist_s1["val_acc"] + hist_s2["val_acc"]
     train_loss = hist_s1["train_loss"] + hist_s2["train_loss"]
-    train_clean_loss = hist_s1.get("train_clean_loss", []) + hist_s2.get("train_clean_loss", [])
+    train_clean_loss = hist_s1.get("train_clean_loss", []) + hist_s2.get(
+        "train_clean_loss", []
+    )
     val_loss = hist_s1["val_loss"] + hist_s2["val_loss"]
     lrs = hist_s1["lr"] + hist_s2["lr"]
     s1_end = len(hist_s1["train_acc"])
@@ -1382,33 +1666,65 @@ def plot_training_history(hist_s1, hist_s2, save_path):
     ax = axes[0]
     ax.plot(train_acc, label="Train Acc (aug)", linewidth=2, marker="o", markersize=3)
     if train_clean_acc and any(v is not None for v in train_clean_acc):
-        ax.plot(train_clean_acc, label="Train Acc (clean)", linewidth=2, marker="^", markersize=3)
+        ax.plot(
+            train_clean_acc,
+            label="Train Acc (clean)",
+            linewidth=2,
+            marker="^",
+            markersize=3,
+        )
     ax.plot(val_acc, label="Val Acc", linewidth=2, marker="s", markersize=3)
-    ax.axvline(x=s1_end - 0.5, color="gray", linestyle="--", alpha=0.6, label="Stage 1→2")
+    ax.axvline(
+        x=s1_end - 0.5, color="gray", linestyle="--", alpha=0.6, label="Stage 1→2"
+    )
     best_idx = int(np.argmax(val_acc))
-    ax.annotate(f"Best: {val_acc[best_idx]:.4f}\n(Ep {best_idx+1})",
-                xy=(best_idx, val_acc[best_idx]),
-                xytext=(best_idx + 1, val_acc[best_idx] - 0.05),
-                arrowprops=dict(arrowstyle="->", color="red"), fontsize=9, color="red")
-    ax.set_title("Accuracy", fontsize=13); ax.set_xlabel("Epoch"); ax.set_ylabel("Accuracy")
-    ax.legend(); ax.grid(alpha=0.3)
+    ax.annotate(
+        f"Best: {val_acc[best_idx]:.4f}\n(Ep {best_idx + 1})",
+        xy=(best_idx, val_acc[best_idx]),
+        xytext=(best_idx + 1, val_acc[best_idx] - 0.05),
+        arrowprops=dict(arrowstyle="->", color="red"),
+        fontsize=9,
+        color="red",
+    )
+    ax.set_title("Accuracy", fontsize=13)
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Accuracy")
+    ax.legend()
+    ax.grid(alpha=0.3)
 
     # Loss
     ax = axes[1]
     ax.plot(train_loss, label="Train Loss (aug)", linewidth=2, marker="o", markersize=3)
     if train_clean_loss and any(v is not None for v in train_clean_loss):
-        ax.plot(train_clean_loss, label="Train Loss (clean)", linewidth=2, marker="^", markersize=3)
+        ax.plot(
+            train_clean_loss,
+            label="Train Loss (clean)",
+            linewidth=2,
+            marker="^",
+            markersize=3,
+        )
     ax.plot(val_loss, label="Val Loss", linewidth=2, marker="s", markersize=3)
-    ax.axvline(x=s1_end - 0.5, color="gray", linestyle="--", alpha=0.6, label="Stage 1→2")
-    ax.set_title("Loss", fontsize=13); ax.set_xlabel("Epoch"); ax.set_ylabel("Loss")
-    ax.legend(); ax.grid(alpha=0.3)
+    ax.axvline(
+        x=s1_end - 0.5, color="gray", linestyle="--", alpha=0.6, label="Stage 1→2"
+    )
+    ax.set_title("Loss", fontsize=13)
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Loss")
+    ax.legend()
+    ax.grid(alpha=0.3)
 
     # LR schedule
     ax = axes[2]
     ax.plot(lrs, color="green", linewidth=2)
-    ax.axvline(x=s1_end - 0.5, color="gray", linestyle="--", alpha=0.6, label="Stage 1→2")
-    ax.set_title("Learning Rate Schedule", fontsize=13); ax.set_xlabel("Epoch"); ax.set_ylabel("LR")
-    ax.set_yscale("log"); ax.legend(); ax.grid(alpha=0.3)
+    ax.axvline(
+        x=s1_end - 0.5, color="gray", linestyle="--", alpha=0.6, label="Stage 1→2"
+    )
+    ax.set_title("Learning Rate Schedule", fontsize=13)
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("LR")
+    ax.set_yscale("log")
+    ax.legend()
+    ax.grid(alpha=0.3)
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
@@ -1434,7 +1750,11 @@ def plot_confusion_matrix(labels, preds, class_names, save_path, normalize=True)
         ax.set_yticks(range(len(sorted_idx)))
         ax.set_yticklabels([class_names[i] for i in sorted_idx], fontsize=5)
         ax.set_xlabel("Per-Class Accuracy", fontsize=11)
-        ax.set_title(f"Per-Class Accuracy (Mean: {np.mean(per_class_acc):.4f})", fontsize=13, fontweight="bold")
+        ax.set_title(
+            f"Per-Class Accuracy (Mean: {np.mean(per_class_acc):.4f})",
+            fontsize=13,
+            fontweight="bold",
+        )
         ax.axvline(x=np.mean(per_class_acc), color="red", linestyle="--", alpha=0.7)
         ax.grid(axis="x", alpha=0.3)
         plt.tight_layout()
@@ -1442,12 +1762,21 @@ def plot_confusion_matrix(labels, preds, class_names, save_path, normalize=True)
         plt.close()
     else:
         fig, ax = plt.subplots(figsize=(20, 18))
-        sns.heatmap(cm, xticklabels=class_names, yticklabels=class_names,
-                    cmap="Blues", fmt=".2f" if normalize else "d",
-                    annot=False, ax=ax, linewidths=0.1)
-        ax.set_xlabel("Predicted"); ax.set_ylabel("True")
+        sns.heatmap(
+            cm,
+            xticklabels=class_names,
+            yticklabels=class_names,
+            cmap="Blues",
+            fmt=".2f" if normalize else "d",
+            annot=False,
+            ax=ax,
+            linewidths=0.1,
+        )
+        ax.set_xlabel("Predicted")
+        ax.set_ylabel("True")
         ax.set_title("Confusion Matrix")
-        plt.xticks(fontsize=5, rotation=90); plt.yticks(fontsize=5)
+        plt.xticks(fontsize=5, rotation=90)
+        plt.yticks(fontsize=5)
         plt.tight_layout()
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
         plt.close()
@@ -1466,14 +1795,34 @@ def plot_per_class_metrics(labels, preds, class_names, save_path):
     fig, ax = plt.subplots(figsize=(12, max(8, len(class_names) * 0.15)))
     y_pos = np.arange(len(class_names))
 
-    ax.barh(y_pos - 0.2, prec[sorted_idx], height=0.2, label="Precision", color="#2196F3", alpha=0.8)
-    ax.barh(y_pos, rec[sorted_idx], height=0.2, label="Recall", color="#FF9800", alpha=0.8)
-    ax.barh(y_pos + 0.2, f1[sorted_idx], height=0.2, label="F1-Score", color="#4CAF50", alpha=0.8)
+    ax.barh(
+        y_pos - 0.2,
+        prec[sorted_idx],
+        height=0.2,
+        label="Precision",
+        color="#2196F3",
+        alpha=0.8,
+    )
+    ax.barh(
+        y_pos, rec[sorted_idx], height=0.2, label="Recall", color="#FF9800", alpha=0.8
+    )
+    ax.barh(
+        y_pos + 0.2,
+        f1[sorted_idx],
+        height=0.2,
+        label="F1-Score",
+        color="#4CAF50",
+        alpha=0.8,
+    )
 
     ax.set_yticks(y_pos)
     ax.set_yticklabels([class_names[i] for i in sorted_idx], fontsize=5)
     ax.set_xlabel("Score", fontsize=11)
-    ax.set_title("Per-Class Precision / Recall / F1 (sorted by F1)", fontsize=13, fontweight="bold")
+    ax.set_title(
+        "Per-Class Precision / Recall / F1 (sorted by F1)",
+        fontsize=13,
+        fontweight="bold",
+    )
     ax.legend(fontsize=10)
     ax.grid(axis="x", alpha=0.3)
     plt.tight_layout()
@@ -1484,7 +1833,9 @@ def plot_per_class_metrics(labels, preds, class_names, save_path):
 
 def save_classification_report(labels, preds, class_names, save_path, wandb_run=None):
     """Print and save the classification report."""
-    report_str = classification_report(labels, preds, target_names=class_names, digits=4)
+    report_str = classification_report(
+        labels, preds, target_names=class_names, digits=4
+    )
     print("\n  📋 Classification Report:")
     print(report_str)
 
@@ -1492,15 +1843,23 @@ def save_classification_report(labels, preds, class_names, save_path, wandb_run=
         f.write(report_str)
     print(f"  Report saved: {save_path}")
 
-    report_dict = classification_report(labels, preds, target_names=class_names, digits=4, output_dict=True)
+    report_dict = classification_report(
+        labels, preds, target_names=class_names, digits=4, output_dict=True
+    )
 
     if wandb_run and WANDB_AVAILABLE:
         wandb.summary["Test Accuracy"] = report_dict["accuracy"]
         wandb.summary["Test Macro F1"] = report_dict["macro avg"]["f1-score"]
         wandb.summary["Test Weighted F1"] = report_dict["weighted avg"]["f1-score"]
-        wandb.log({"Confusion Matrix": wandb.plot.confusion_matrix(
-            preds=preds.tolist(), y_true=labels.tolist(), class_names=class_names,
-        )})
+        wandb.log(
+            {
+                "Confusion Matrix": wandb.plot.confusion_matrix(
+                    preds=preds.tolist(),
+                    y_true=labels.tolist(),
+                    class_names=class_names,
+                )
+            }
+        )
 
     return report_dict
 
@@ -1509,7 +1868,10 @@ def save_classification_report(labels, preds, class_names, save_path, wandb_run=
 #                      MODEL EXPORT
 # ======================================================================
 
-def export_model(model, class_names, num_classes, image_size, dirs, device):
+
+def export_model(
+    model, architecture, class_names, num_classes, image_size, dirs, device
+):
     """Export to PTH + ONNX."""
     raw = model._orig_mod if hasattr(model, "_orig_mod") else model
     raw.eval()
@@ -1517,13 +1879,16 @@ def export_model(model, class_names, num_classes, image_size, dirs, device):
 
     # PTH
     pth_path = dirs["models"] / "best_model.pth"
-    torch.save({
-        "model_state_dict": raw.state_dict(),
-        "class_names": class_names,
-        "num_classes": num_classes,
-        "architecture": "efficientnet_v2_s",
-        "image_size": image_size,
-    }, pth_path)
+    torch.save(
+        {
+            "model_state_dict": raw.state_dict(),
+            "class_names": class_names,
+            "num_classes": num_classes,
+            "architecture": architecture,
+            "image_size": image_size,
+        },
+        pth_path,
+    )
     print(f"  💾 PTH saved: {pth_path}")
 
     # ONNX
@@ -1531,8 +1896,12 @@ def export_model(model, class_names, num_classes, image_size, dirs, device):
     dummy = torch.randn(1, 3, image_size, image_size).to(device)
     try:
         torch.onnx.export(
-            raw, dummy, str(onnx_path), opset_version=17,
-            input_names=["input"], output_names=["output"],
+            raw,
+            dummy,
+            str(onnx_path),
+            opset_version=17,
+            input_names=["input"],
+            output_names=["output"],
             dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}},
         )
         print(f"  💾 ONNX saved: {onnx_path}")
@@ -1550,12 +1919,26 @@ def export_model(model, class_names, num_classes, image_size, dirs, device):
 #                           MAIN
 # ======================================================================
 
+
 def main():
     parser = argparse.ArgumentParser(description="🌿 Leafy Plant Disease Training")
     parser.add_argument("--dry-run", action="store_true", help="Quick 1-epoch test")
     parser.add_argument("--colab", action="store_true", help="Colab T4 profile")
     parser.add_argument("--no-wandb", action="store_true", help="Disable W&B")
-    parser.add_argument("--data-dir", default="./new_data", help="Path to train/val/test splits")
+    parser.add_argument(
+        "--data-dir", default="./new_data", help="Path to train/val/test splits"
+    )
+    parser.add_argument(
+        "--architecture",
+        default="efficientnet_v2_s",
+        choices=sorted(ARCHITECTURE_SPECS),
+        help="Backbone architecture to train",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Optional output directory (default: architecture-specific folder)",
+    )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument(
         "--run-type",
@@ -1566,20 +1949,55 @@ def main():
     parser.add_argument(
         "--gpu-profile",
         default="auto",
-        choices=["auto", "cpu", "mobile_8gb", "rtx_12gb", "t4_16gb", "generic_16gb", "generic_24gb"],
+        choices=[
+            "auto",
+            "cpu",
+            "mobile_8gb",
+            "rtx_12gb",
+            "t4_16gb",
+            "generic_16gb",
+            "generic_24gb",
+        ],
         help="Hardware profile for batch sizes and image sizes",
     )
-    parser.add_argument("--s1-batch", type=int, default=None, help="Custom Stage 1 batch size")
-    parser.add_argument("--s2-batch", type=int, default=None, help="Custom Stage 2 batch size")
-    parser.add_argument("--accum-steps-s1", type=int, default=None, help="Custom Stage 1 gradient accumulation")
-    parser.add_argument("--accum-steps-s2", type=int, default=None, help="Custom Stage 2 gradient accumulation")
-    parser.add_argument("--s1-img-size", type=int, default=None, help="Custom Stage 1 image size")
-    parser.add_argument("--s2-img-size", type=int, default=None, help="Custom Stage 2 image size")
-    parser.add_argument("--num-workers", type=int, default=None, help="Custom dataloader worker count")
-    parser.add_argument("--resume", action="store_true",
-                        help="Resume from Stage 2 using saved Stage 1 checkpoint")
-    parser.add_argument("--wandb-run-id", type=str, default=None,
-                        help="W&B run ID to resume (use with --resume)")
+    parser.add_argument(
+        "--s1-batch", type=int, default=None, help="Custom Stage 1 batch size"
+    )
+    parser.add_argument(
+        "--s2-batch", type=int, default=None, help="Custom Stage 2 batch size"
+    )
+    parser.add_argument(
+        "--accum-steps-s1",
+        type=int,
+        default=None,
+        help="Custom Stage 1 gradient accumulation",
+    )
+    parser.add_argument(
+        "--accum-steps-s2",
+        type=int,
+        default=None,
+        help="Custom Stage 2 gradient accumulation",
+    )
+    parser.add_argument(
+        "--s1-img-size", type=int, default=None, help="Custom Stage 1 image size"
+    )
+    parser.add_argument(
+        "--s2-img-size", type=int, default=None, help="Custom Stage 2 image size"
+    )
+    parser.add_argument(
+        "--num-workers", type=int, default=None, help="Custom dataloader worker count"
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from Stage 2 using saved Stage 1 checkpoint",
+    )
+    parser.add_argument(
+        "--wandb-run-id",
+        type=str,
+        default=None,
+        help="W&B run ID to resume (use with --resume)",
+    )
     args = parser.parse_args()
 
     # ── Device ──
@@ -1588,8 +2006,11 @@ def main():
     seed_everything(args.seed)
     configure_runtime(device)
 
+    architecture_spec = get_architecture_spec(args.architecture)
+    output_dir_name = args.output_dir or architecture_spec["output_dir"]
+
     # ── Output folders ──
-    dirs = create_output_dirs("EfficientNetV2S")
+    dirs = create_output_dirs(output_dir_name)
 
     # ── Tee logging: save all console output ──
     tee = TeeLogger(dirs["logs"] / "full_training_log.txt")
@@ -1597,9 +2018,14 @@ def main():
 
     # ── Analyze dataset (auto-detect classes) ──
     class_names, num_classes, train_counts = analyze_dataset(args.data_dir)
+    save_dataset_summary(
+        train_counts, class_names, dirs["logs"] / "dataset_summary.json"
+    )
 
     # Save class distribution plot
-    plot_class_distribution(train_counts, class_names, dirs["images"] / "class_distribution.png")
+    plot_class_distribution(
+        train_counts, class_names, dirs["images"] / "class_distribution.png"
+    )
 
     # Compute dataset-specific mean/std
     dataset_mean, dataset_std = compute_dataset_stats(args.data_dir)
@@ -1632,24 +2058,45 @@ def main():
 
     print(f"\n  ⚙️  CONFIG (auto-configured)")
     print(f"  {'─' * 40}")
+    print(f"  Architecture:  {architecture_spec['label']}")
     print(f"  Run type:      {hardware['run_type']}")
     print(f"  Hardware:      {hardware['name']}")
-    print(f"  GPU:           {hardware['gpu_name']} ({hardware['vram_gb']:.1f} GB VRAM)")
-    print(f"  CPU / RAM:     {hardware['cpu_count']} cores, {hardware['system_ram_gb']:.1f} GB system RAM")
+    print(
+        f"  GPU:           {hardware['gpu_name']} ({hardware['vram_gb']:.1f} GB VRAM)"
+    )
+    print(
+        f"  CPU / RAM:     {hardware['cpu_count']} cores, {hardware['system_ram_gb']:.1f} GB system RAM"
+    )
     print(f"  NUM_CLASSES:    {num_classes} (auto-detected)")
-    print(f"  Stage 1:        {s1_epochs} ep, {s1_img_size}px, batch {s1_batch}×{accum_steps_s1} = {s1_batch*accum_steps_s1} effective")
-    print(f"  Stage 2:        {s2_epochs} ep, {s2_img_size}px, batch {s2_batch}×{accum_steps_s2} = {s2_batch*accum_steps_s2} effective")
-    print(f"  Loss S1:        FocalLoss (γ={focal_gamma}) + ENS weights + label_smoothing={s1_label_smoothing}")
-    print(f"  Loss S2:        FocalLoss (γ={s2_focal_gamma}) + ENS weights + label_smoothing={s2_label_smoothing}")
-    print(f"  Augmentation S1: Weighted sampler + Mixup/CutMix @ {int(s1_mixup_prob * 100)}% -> {int(s1_final_mixup_prob * 100)}% of batches")
-    print(f"  Augmentation S2: Weighted sampler + Mixup-only @ {int(s2_mixup_prob * 100)}% -> {int(s2_final_mixup_prob * 100)}% of batches")
+    print(
+        f"  Stage 1:        {s1_epochs} ep, {s1_img_size}px, batch {s1_batch}×{accum_steps_s1} = {s1_batch * accum_steps_s1} effective"
+    )
+    print(
+        f"  Stage 2:        {s2_epochs} ep, {s2_img_size}px, batch {s2_batch}×{accum_steps_s2} = {s2_batch * accum_steps_s2} effective"
+    )
+    print(
+        f"  Loss S1:        FocalLoss (γ={focal_gamma}) + ENS weights + label_smoothing={s1_label_smoothing}"
+    )
+    print(
+        f"  Loss S2:        FocalLoss (γ={s2_focal_gamma}) + ENS weights + label_smoothing={s2_label_smoothing}"
+    )
+    print(
+        f"  Augmentation S1: Weighted sampler + Mixup/CutMix @ {int(s1_mixup_prob * 100)}% -> {int(s1_final_mixup_prob * 100)}% of batches"
+    )
+    print(
+        f"  Augmentation S2: Weighted sampler + Mixup-only @ {int(s2_mixup_prob * 100)}% -> {int(s2_final_mixup_prob * 100)}% of batches"
+    )
     print(f"  Weight decay:   {weight_decay} (excluded on BN/bias)")
     print(f"  Grad clip:      {grad_clip}")
     print(f"  Patience:       Stage 1 = {patience_s1}, Stage 2 = {patience_s2}")
     print(f"  Clean-train eval subset: {train_eval_max_samples:,} images")
     print(f"  Workers:        {num_workers}")
-    print(f"  Dataset mean:   [{dataset_mean[0]:.4f}, {dataset_mean[1]:.4f}, {dataset_mean[2]:.4f}]")
-    print(f"  Dataset std:    [{dataset_std[0]:.4f}, {dataset_std[1]:.4f}, {dataset_std[2]:.4f}]")
+    print(
+        f"  Dataset mean:   [{dataset_mean[0]:.4f}, {dataset_mean[1]:.4f}, {dataset_mean[2]:.4f}]"
+    )
+    print(
+        f"  Dataset std:    [{dataset_std[0]:.4f}, {dataset_std[1]:.4f}, {dataset_std[2]:.4f}]"
+    )
 
     # ══════════════════════════════════════════════════════════════
     #  RESUME CHECK
@@ -1669,8 +2116,10 @@ def main():
             sys.exit(1)
 
         # Build model and load Stage 1 weights
-        model = build_model(num_classes, device)
-        checkpoint = torch.load(s1_checkpoint_path, map_location=device, weights_only=False)
+        model = build_model(args.architecture, num_classes, device)
+        checkpoint = torch.load(
+            s1_checkpoint_path, map_location=device, weights_only=False
+        )
         raw = model._orig_mod if hasattr(model, "_orig_mod") else model
         raw.load_state_dict(checkpoint["model_state_dict"])
         best_acc_s1 = checkpoint.get("accuracy", 0.0)
@@ -1678,7 +2127,13 @@ def main():
         model = try_compile(model)
 
         # Reconstruct Stage 1 history from CSV log
-        hist_s1 = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": [], "lr": []}
+        hist_s1 = {
+            "train_loss": [],
+            "train_acc": [],
+            "val_loss": [],
+            "val_acc": [],
+            "lr": [],
+        }
         if s1_log_path.exists():
             s1_df = pd.read_csv(s1_log_path)
             hist_s1["train_loss"] = s1_df["train_loss"].tolist()
@@ -1688,7 +2143,9 @@ def main():
             hist_s1["lr"] = s1_df["lr"].tolist()
             print(f"  📄 Loaded Stage 1 history ({len(s1_df)} epochs from CSV)")
         else:
-            print("  ⚠️  Stage 1 CSV log not found — training history plot will only show Stage 2")
+            print(
+                "  ⚠️  Stage 1 CSV log not found — training history plot will only show Stage 2"
+            )
 
         # Resume W&B run
         wandb_run = None
@@ -1704,21 +2161,25 @@ def main():
                 else:
                     wandb_run = wandb.init(
                         project="leafy",
-                        name=f"EfficientNetV2S_resumed_{int(time.time())}",
+                        name=f"{architecture_spec['output_dir']}_resumed_{int(time.time())}",
                         config={
-                            "architecture": "EfficientNet-V2-S",
+                            "architecture": architecture_spec["label"],
                             "num_classes": num_classes,
-                            "s1_epochs": s1_epochs, "s2_epochs": s2_epochs,
-                            "s1_img_size": s1_img_size, "s2_img_size": s2_img_size,
-                            "s1_batch": s1_batch, "s2_batch": s2_batch,
+                            "s1_epochs": s1_epochs,
+                            "s2_epochs": s2_epochs,
+                            "s1_img_size": s1_img_size,
+                            "s2_img_size": s2_img_size,
+                            "s1_batch": s1_batch,
+                            "s2_batch": s2_batch,
                             "s1_best_acc": best_acc_s1,
                             "s1_label_smoothing": s1_label_smoothing,
                             "s2_label_smoothing": s2_label_smoothing,
                             "weight_decay": weight_decay,
-                            "dataset_mean": dataset_mean, "dataset_std": dataset_std,
+                            "dataset_mean": dataset_mean,
+                            "dataset_std": dataset_std,
                             "resumed": True,
                         },
-                        tags=["efficientnet-v2-s", "plant-pathology", "resumed"],
+                        tags=[args.architecture, "plant-pathology", "resumed"],
                     )
                     print(f"  📊 Started new W&B run (no run ID provided for resume)")
             except Exception as e:
@@ -1738,24 +2199,43 @@ def main():
             dataset_std,
         )
         dataloaders, sizes, train_dataset = create_dataloaders(
-            args.data_dir, s1_img_size, s1_batch, dataset_mean, dataset_std, num_workers,
-            train_transform=stage1_train_transform, use_weighted_sampler=True,
+            args.data_dir,
+            s1_img_size,
+            s1_batch,
+            dataset_mean,
+            dataset_std,
+            num_workers,
+            train_transform=stage1_train_transform,
+            use_weighted_sampler=True,
         )
         train_eval_loader, train_eval_size = create_train_eval_loader(
-            args.data_dir, s1_img_size, dataset_mean, dataset_std, s1_batch, num_workers,
+            args.data_dir,
+            s1_img_size,
+            dataset_mean,
+            dataset_std,
+            s1_batch,
+            num_workers,
             max_samples=train_eval_max_samples,
         )
         print(f"  Train: {sizes['train']:,}  Val: {sizes['val']:,}")
         print(f"  Clean train eval subset: {train_eval_size:,}")
 
         # Augmented samples visualization
-        plot_augmented_samples(train_dataset, class_names, dirs["images"] / "augmented_samples_stage1.png")
+        plot_augmented_samples(
+            train_dataset,
+            class_names,
+            dataset_mean,
+            dataset_std,
+            dirs["images"] / "augmented_samples_stage1.png",
+        )
 
         # Class weights for loss
-        class_weights = compute_ens_class_weights(train_dataset, ens_beta, num_classes, device)
+        class_weights = compute_ens_class_weights(
+            train_dataset, ens_beta, num_classes, device
+        )
 
         # Model
-        model = build_model(num_classes, device)
+        model = build_model(args.architecture, num_classes, device)
         model = try_compile(model)
 
         # Loss — Focal Loss (better than CE for imbalanced data)
@@ -1767,7 +2247,10 @@ def main():
 
         # ── LR Finder for Stage 1 ──
         suggested_lr_s1 = run_lr_finder(
-            model, dataloaders["train"], criterion, device,
+            model,
+            dataloaders["train"],
+            criterion,
+            device,
             save_path=dirs["images"] / "lr_finder_stage1.png",
             num_iter=min(200, len(dataloaders["train"])),
         )
@@ -1778,7 +2261,10 @@ def main():
         )
         steps_per_epoch_s1 = len(dataloaders["train"]) // accum_steps_s1
         scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            optimizer, T_0=steps_per_epoch_s1 * 2, T_mult=1, eta_min=suggested_lr_s1 / 100,
+            optimizer,
+            T_0=steps_per_epoch_s1 * 2,
+            T_mult=1,
+            eta_min=suggested_lr_s1 / 100,
         )
 
         # W&B
@@ -1787,32 +2273,49 @@ def main():
             try:
                 wandb_run = wandb.init(
                     project="leafy",
-                    name=f"EfficientNetV2S_{int(time.time())}",
+                    name=f"{architecture_spec['output_dir']}_{int(time.time())}",
                     config={
-                        "architecture": "EfficientNet-V2-S",
+                        "architecture": architecture_spec["label"],
                         "num_classes": num_classes,
-                        "s1_epochs": s1_epochs, "s2_epochs": s2_epochs,
-                        "s1_img_size": s1_img_size, "s2_img_size": s2_img_size,
-                        "s1_batch": s1_batch, "s2_batch": s2_batch,
+                        "s1_epochs": s1_epochs,
+                        "s2_epochs": s2_epochs,
+                        "s1_img_size": s1_img_size,
+                        "s2_img_size": s2_img_size,
+                        "s1_batch": s1_batch,
+                        "s2_batch": s2_batch,
                         "s1_lr": suggested_lr_s1,
                         "s1_label_smoothing": s1_label_smoothing,
                         "s2_label_smoothing": s2_label_smoothing,
                         "weight_decay": weight_decay,
-                        "dataset_mean": dataset_mean, "dataset_std": dataset_std,
+                        "dataset_mean": dataset_mean,
+                        "dataset_std": dataset_std,
                     },
-                    tags=["efficientnet-v2-s", "plant-pathology"],
+                    tags=[args.architecture, "plant-pathology"],
                 )
             except Exception as e:
                 print(f"  W&B init failed: {e}")
 
         # Train Stage 1 with stronger balancing and per-batch cosine restarts.
         model, hist_s1, best_acc_s1 = train_stage(
-            model, dataloaders, sizes, criterion, optimizer, scheduler,
-            device, dirs, "Stage1_FeatureExtraction", s1_epochs, patience_s1, grad_clip,
-            accum_steps=accum_steps_s1, use_mixup=True, mixup_prob=s1_mixup_prob,
+            model,
+            dataloaders,
+            sizes,
+            criterion,
+            optimizer,
+            scheduler,
+            device,
+            dirs,
+            "Stage1_FeatureExtraction",
+            s1_epochs,
+            patience_s1,
+            grad_clip,
+            accum_steps=accum_steps_s1,
+            use_mixup=True,
+            mixup_prob=s1_mixup_prob,
             final_mixup_prob=s1_final_mixup_prob,
             use_cutmix=True,
-            step_scheduler_per_batch=True, wandb_run=wandb_run,
+            step_scheduler_per_batch=True,
+            wandb_run=wandb_run,
             train_eval_loader=train_eval_loader,
         )
         print(f"\n  ✅ Stage 1 done — Best Val Acc: {best_acc_s1:.4f}")
@@ -1848,24 +2351,43 @@ def main():
         random_erasing_p=0.10,
     )
     dataloaders, sizes, train_dataset = create_dataloaders(
-        args.data_dir, s2_img_size, s2_batch, dataset_mean, dataset_std, num_workers,
-        train_transform=stage2_train_transform, use_weighted_sampler=True,
+        args.data_dir,
+        s2_img_size,
+        s2_batch,
+        dataset_mean,
+        dataset_std,
+        num_workers,
+        train_transform=stage2_train_transform,
+        use_weighted_sampler=True,
     )
     train_eval_loader, train_eval_size = create_train_eval_loader(
-        args.data_dir, s2_img_size, dataset_mean, dataset_std, s2_batch, num_workers,
+        args.data_dir,
+        s2_img_size,
+        dataset_mean,
+        dataset_std,
+        s2_batch,
+        num_workers,
         max_samples=train_eval_max_samples,
     )
     print(f"  Image size: {s2_img_size}×{s2_img_size}, Batch: {s2_batch}")
     print(f"  Clean train eval subset: {train_eval_size:,}")
 
     # Augmented samples at new resolution
-    plot_augmented_samples(train_dataset, class_names, dirs["images"] / "augmented_samples_stage2.png")
+    plot_augmented_samples(
+        train_dataset,
+        class_names,
+        dataset_mean,
+        dataset_std,
+        dirs["images"] / "augmented_samples_stage2.png",
+    )
 
     # Unfreeze
     unfreeze_backbone(model)
 
     # Stage 2 uses lighter Focal Loss — model is already learned, just needs refinement.
-    class_weights = compute_ens_class_weights(train_dataset, ens_beta, num_classes, device)
+    class_weights = compute_ens_class_weights(
+        train_dataset, ens_beta, num_classes, device
+    )
     criterion = FocalLoss(
         weight=class_weights,
         gamma=s2_focal_gamma,
@@ -1874,7 +2396,10 @@ def main():
 
     # ── LR Finder for Stage 2 (discriminative LR) ──
     suggested_lr_s2 = run_lr_finder(
-        model, dataloaders["train"], criterion, device,
+        model,
+        dataloaders["train"],
+        criterion,
+        device,
         save_path=dirs["images"] / "lr_finder_stage2.png",
         num_iter=min(200, len(dataloaders["train"])),
     )
@@ -1885,36 +2410,58 @@ def main():
     print(f"  Discriminative LR — Head: {lr_head:.2e}, Backbone: {lr_backbone:.2e}")
 
     # Discriminative LR + no weight decay on BN/bias
-    param_groups = get_param_groups_discriminative_no_decay(model, lr_head, lr_backbone, weight_decay)
+    param_groups = get_param_groups_discriminative_no_decay(
+        model, lr_head, lr_backbone, weight_decay
+    )
     optimizer = optim.AdamW(param_groups)
 
     # Warmup (5 epochs) → smooth CosineAnnealingLR — prevents catastrophic forgetting
     # when backbone is suddenly unfrozen; smooth decay is more stable than warm restarts.
     warmup_epochs = 5
     warmup_scheduler = optim.lr_scheduler.LinearLR(
-        optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs,
+        optimizer,
+        start_factor=0.1,
+        end_factor=1.0,
+        total_iters=warmup_epochs,
     )
     cosine_scheduler = optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=s2_epochs - warmup_epochs, eta_min=1e-7,
+        optimizer,
+        T_max=s2_epochs - warmup_epochs,
+        eta_min=1e-7,
     )
     scheduler = optim.lr_scheduler.SequentialLR(
         optimizer,
         schedulers=[warmup_scheduler, cosine_scheduler],
         milestones=[warmup_epochs],
     )
-    print(f"  Scheduler: LinearWarmup({warmup_epochs}ep) → CosineAnnealing({s2_epochs - warmup_epochs}ep)")
+    print(
+        f"  Scheduler: LinearWarmup({warmup_epochs}ep) → CosineAnnealing({s2_epochs - warmup_epochs}ep)"
+    )
 
     if wandb_run and WANDB_AVAILABLE:
         wandb.config.update({"s2_lr_head": lr_head, "s2_lr_backbone": lr_backbone})
 
     # Train Stage 2 with Mixup-only (no CutMix) and per-epoch scheduling.
     model, hist_s2, best_acc_s2 = train_stage(
-        model, dataloaders, sizes, criterion, optimizer, scheduler,
-        device, dirs, "Stage2_FineTuning", s2_epochs, patience_s2, grad_clip,
-        accum_steps=accum_steps_s2, use_mixup=True, mixup_prob=s2_mixup_prob,
+        model,
+        dataloaders,
+        sizes,
+        criterion,
+        optimizer,
+        scheduler,
+        device,
+        dirs,
+        "Stage2_FineTuning",
+        s2_epochs,
+        patience_s2,
+        grad_clip,
+        accum_steps=accum_steps_s2,
+        use_mixup=True,
+        mixup_prob=s2_mixup_prob,
         final_mixup_prob=s2_final_mixup_prob,
         use_cutmix=False,
-        step_scheduler_per_batch=False, wandb_run=wandb_run,
+        step_scheduler_per_batch=False,
+        wandb_run=wandb_run,
         train_eval_loader=train_eval_loader,
     )
     print(f"\n  ✅ Stage 2 done — Best Val Acc: {best_acc_s2:.4f}")
@@ -1937,8 +2484,11 @@ def main():
         get_eval_transforms(s2_img_size, dataset_mean, dataset_std),
     )
     test_loader = DataLoader(
-        test_dataset, batch_size=s2_batch, shuffle=False,
-        num_workers=num_workers, pin_memory=True,
+        test_dataset,
+        batch_size=s2_batch,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
     )
     print(f"  Test samples: {len(test_dataset):,}")
 
@@ -1949,8 +2499,15 @@ def main():
 
     # TTA evaluation (5 augmented views)
     tta_labels, tta_preds = evaluate_model_tta(
-        model, test_dir, s2_img_size, dataset_mean, dataset_std,
-        s2_batch, num_workers, device, n_augments=5,
+        model,
+        test_dir,
+        s2_img_size,
+        dataset_mean,
+        dataset_std,
+        s2_batch,
+        num_workers,
+        device,
+        n_augments=5,
     )
 
     # Use TTA results if they're better, otherwise use standard
@@ -1962,15 +2519,22 @@ def main():
 
     # Reports & plots
     report_dict = save_classification_report(
-        test_labels, test_preds, class_names,
-        dirs["logs"] / "classification_report.txt", wandb_run,
+        test_labels,
+        test_preds,
+        class_names,
+        dirs["logs"] / "classification_report.txt",
+        wandb_run,
     )
     plot_confusion_matrix(
-        test_labels, test_preds, class_names,
+        test_labels,
+        test_preds,
+        class_names,
         dirs["images"] / "confusion_matrix.png",
     )
     plot_per_class_metrics(
-        test_labels, test_preds, class_names,
+        test_labels,
+        test_preds,
+        class_names,
         dirs["images"] / "per_class_metrics.png",
     )
 
@@ -1981,11 +2545,13 @@ def main():
     print("  📦 EXPORTING MODEL")
     print("═" * 60)
 
-    export_model(model, class_names, num_classes, s2_img_size, dirs, device)
+    export_model(
+        model, args.architecture, class_names, num_classes, s2_img_size, dirs, device
+    )
 
     # Save inference config (everything needed to reload)
     inference_config = {
-        "architecture": "efficientnet_v2_s",
+        "architecture": args.architecture,
         "num_classes": num_classes,
         "image_size": s2_img_size,
         "mean": dataset_mean,
@@ -2002,8 +2568,11 @@ def main():
     # ══════════════════════════════════════════════════════════════
     if wandb_run and WANDB_AVAILABLE:
         try:
-            artifact = wandb.Artifact("EfficientNetV2S-final", type="model",
-                                      metadata={"test_accuracy": report_dict.get("accuracy", 0)})
+            artifact = wandb.Artifact(
+                f"{architecture_spec['output_dir']}-final",
+                type="model",
+                metadata={"test_accuracy": report_dict.get("accuracy", 0)},
+            )
             artifact.add_file(str(dirs["models"] / "best_model.pth"))
             artifact.add_file(str(dirs["models"] / "class_names.json"))
             artifact.add_file(str(dirs["models"] / "inference_config.json"))
@@ -2023,7 +2592,7 @@ def main():
     print(f"  Stage 1 Best Val Acc: {best_acc_s1:.4f}")
     print(f"  Stage 2 Best Val Acc: {best_acc_s2:.4f}")
     print(f"  Test Accuracy:        {report_dict.get('accuracy', 'N/A')}")
-    print(f"\n  📁 All outputs in: EfficientNetV2S/")
+    print(f"\n  📁 All outputs in: {output_dir_name}/")
     print(f"     models/best_model.pth         — PyTorch weights")
     print(f"     models/model.onnx             — ONNX format")
     print(f"     models/class_names.json       — Class mapping")

@@ -9,3 +9,11 @@
 /.vscode/
 /EfficientNetV2S/
 /EfficientNetV2S-run1/
+/__pycache__/
+**/__pycache__/
+/EfficientNetB0/
+/MobileNetV3Large/
+/ConvNeXtTiny/
+/data_curated/
+/new_data_curated/
+/reports/

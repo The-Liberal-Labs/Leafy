@@ -11,3 +11,5 @@ wandb
 torchsummary
 tensorboard
 torch-lr-finder
+onnx
+onnxscript

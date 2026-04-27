@@ -1,0 +1,22 @@
+{
+  "merge_into": {
+    "Bell_pepper___bacterial_spot": "Pepper_bell___bacterial_spot",
+    "Bell_pepper___healthy": "Pepper_bell___healthy",
+    "Tomato__yellow_leaf_curl_virus": "Tomato___leaf_curl"
+  },
+  "drop_classes": [
+    "Coffee__cercospora_leaf_spot",
+    "Lemon__diseased",
+    "Pepper_bell__bacterial_spot",
+    "Pepper_bell__healthy",
+    "Potato___nematode",
+    "Soybean__bacterial_blight",
+    "Soybean__downy_mildew",
+    "Soybean__mosaic_virus",
+    "Soybean__powdery_mildew",
+    "Soybean__rust",
+    "Soybean__southern_blight",
+    "Sugarcane__red_stripe",
+    "Wheat__septoria"
+  ]
+}
