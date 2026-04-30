@@ -177,7 +177,7 @@ python data_preparation/deduplicate_dataset.py --data-dir ./data_split --report-
 ## Training Command
 
 ```bash
-python train_efficientnet.py --data-dir ./data_split --architecture efficientnet_v2_s --selection-metric val_macro_f1 --imbalance-strategy ens_loss
+python model_training/train_efficientnet.py --data-dir ./data_split --architecture efficientnet_v2_s --selection-metric val_macro_f1 --imbalance-strategy ens_loss
 ```
 
 ## Files to Publish With the Dataset

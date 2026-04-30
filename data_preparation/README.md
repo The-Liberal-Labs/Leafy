@@ -1,8 +1,8 @@
 # Data Preparation
 
-The active Leafy dataset is `data_split/`. It already contains `train/`, `val/`,
-and `test/` folders, so normal work should validate that split rather than
-rebuild it.
+The primary dataset is `data_split/`. It already contains `train/`, `val/`,
+and `test/` folders in PyTorch `ImageFolder` format. Normal workflow validates
+the existing split rather than rebuilding it.
 
 ## Primary Workflow
 
@@ -15,23 +15,23 @@ python data_preparation/validate_split_dataset.py \
 # 2. Audit class counts and imbalance
 python data_preparation/dataset_audit.py \
     --data-dir ./data_split \
-    --top-k 25 \
-    --report-json ./reports/audit_data_split.json
+    --top-k 25
 
-# 3. Check that images are readable. This is dry-run by default.
+# 3. Check image integrity (dry-run by default)
 python data_preparation/clean_dataset.py \
     --data-dir ./data_split
 
-# 4. Optional duplicate report
+# 4. Optional: perceptual duplicate check
 python data_preparation/deduplicate_dataset.py \
     --data-dir ./data_split \
-    --report-json ./reports/duplicate_report.json
+    --include-perceptual \
+    --report-json ./reports/duplicate_report_perceptual.json
 ```
 
-Train after validation:
+## Train After Validation
 
 ```bash
-python train_efficientnet.py --data-dir ./data_split
+python model_training/train_efficientnet.py --data-dir ./data_split
 ```
 
 ## Scripts
