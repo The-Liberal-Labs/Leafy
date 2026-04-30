@@ -452,38 +452,36 @@ def analyze_dataset(data_dir):
     )
     num_classes = len(class_names)
 
+    _IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+
     # Count images per class
     train_counts = {}
     for cls in class_names:
         cls_path = os.path.join(train_dir, cls)
-        count = len(
-            [
-                f
-                for f in os.listdir(cls_path)
-                if os.path.isfile(os.path.join(cls_path, f))
-            ]
+        count = sum(
+            1
+            for f in os.listdir(cls_path)
+            if os.path.isfile(os.path.join(cls_path, f))
+            and os.path.splitext(f)[1].lower() in _IMAGE_SUFFIXES
         )
         train_counts[cls] = count
 
+    def _count_split_images(split_dir):
+        total = 0
+        for c in os.listdir(split_dir):
+            cls_dir = os.path.join(split_dir, c)
+            if os.path.isdir(cls_dir):
+                total += sum(
+                    1
+                    for f in os.listdir(cls_dir)
+                    if os.path.isfile(os.path.join(cls_dir, f))
+                    and os.path.splitext(f)[1].lower() in _IMAGE_SUFFIXES
+                )
+        return total
+
     total_train = sum(train_counts.values())
-    total_val = (
-        sum(
-            len(os.listdir(os.path.join(val_dir, c)))
-            for c in os.listdir(val_dir)
-            if os.path.isdir(os.path.join(val_dir, c))
-        )
-        if os.path.isdir(val_dir)
-        else 0
-    )
-    total_test = (
-        sum(
-            len(os.listdir(os.path.join(test_dir, c)))
-            for c in os.listdir(test_dir)
-            if os.path.isdir(os.path.join(test_dir, c))
-        )
-        if os.path.isdir(test_dir)
-        else 0
-    )
+    total_val = _count_split_images(val_dir) if os.path.isdir(val_dir) else 0
+    total_test = _count_split_images(test_dir) if os.path.isdir(test_dir) else 0
 
     print(f"\n  📊 DATASET ANALYSIS")
     print(f"  {'─' * 40}")
@@ -592,7 +590,7 @@ def plot_class_distribution(train_counts, class_names, save_path):
     sorted_indices = np.argsort(counts)
     sorted_counts = [counts[i] for i in sorted_indices]
     sorted_names = [class_names[i] for i in sorted_indices]
-    sorted_colors = [colors[i] for i in range(len(sorted_indices))]
+    sorted_colors = [colors[i] for i in sorted_indices]
 
     bars = ax.barh(
         range(len(sorted_counts)), sorted_counts, color=sorted_colors, edgecolor="none"
@@ -886,11 +884,8 @@ def create_train_eval_loader(
     )
 
     if max_samples and len(train_eval_dataset) > max_samples:
-        rng = np.random.default_rng(42)
-        indices = np.sort(
-            rng.choice(len(train_eval_dataset), size=max_samples, replace=False)
-        )
-        train_eval_dataset = Subset(train_eval_dataset, indices.tolist())
+        indices = sorted(random.sample(range(len(train_eval_dataset)), max_samples))
+        train_eval_dataset = Subset(train_eval_dataset, indices)
 
     train_eval_loader = DataLoader(
         train_eval_dataset,
@@ -1091,23 +1086,42 @@ def get_param_groups(model, lr_head, lr_backbone):
     ]
 
 
+_NORM_MODULE_TYPES = (
+    nn.BatchNorm1d,
+    nn.BatchNorm2d,
+    nn.BatchNorm3d,
+    nn.LayerNorm,
+    nn.GroupNorm,
+    nn.InstanceNorm1d,
+    nn.InstanceNorm2d,
+    nn.InstanceNorm3d,
+    nn.LocalResponseNorm,
+)
+
+
+def _collect_no_decay_param_names(model):
+    """Return a set of parameter names that belong to normalization layers."""
+    no_decay = set()
+    for module_name, module in model.named_modules():
+        if isinstance(module, _NORM_MODULE_TYPES):
+            prefix = f"{module_name}." if module_name else ""
+            for param_name, _ in module.named_parameters(recurse=False):
+                no_decay.add(f"{prefix}{param_name}")
+    return no_decay
+
+
 def get_param_groups_no_decay(model, lr, weight_decay):
     """
-    Create param groups that EXCLUDE BatchNorm and bias from weight decay.
-    Applying weight decay to BN/bias hurts convergence (known best practice).
+    Create param groups that EXCLUDE BatchNorm/LayerNorm and bias from weight decay.
+    Uses module-type inspection, not string heuristics, to reliably catch all architectures.
     """
+    no_decay_names = _collect_no_decay_param_names(model)
     decay_params = []
     no_decay_params = []
     for name, param in model.named_parameters():
         if not param.requires_grad:
             continue
-        # Exclude BN weights, BN biases, and all biases from weight decay
-        if (
-            "bn" in name
-            or "batch" in name.lower()
-            or "norm" in name.lower()
-            or "bias" in name
-        ):
+        if name in no_decay_names or "bias" in name:
             no_decay_params.append(param)
         else:
             decay_params.append(param)
@@ -1125,19 +1139,16 @@ def get_param_groups_discriminative_no_decay(model, lr_head, lr_backbone, weight
     """
     Discriminative LR + exclude BN/bias from weight decay.
     4 groups: backbone+decay, backbone+no_decay, head+decay, head+no_decay.
+    Uses module-type inspection, not string heuristics, for norm-layer detection.
     """
+    no_decay_names = _collect_no_decay_param_names(model)
     backbone_decay, backbone_no_decay = [], []
     head_decay, head_no_decay = [], []
 
     for name, param in model.named_parameters():
         if not param.requires_grad:
             continue
-        is_no_decay = (
-            "bn" in name
-            or "batch" in name.lower()
-            or "norm" in name.lower()
-            or "bias" in name
-        )
+        is_no_decay = name in no_decay_names or "bias" in name
         if name.startswith("features") or name.startswith("_orig_mod.features"):
             if is_no_decay:
                 backbone_no_decay.append(param)
@@ -1343,8 +1354,8 @@ def train_one_epoch(
         apply_mix = use_mixup and (random.random() < mixup_prob)
         if apply_mix:
             if use_cutmix and random.random() < 0.5:
-                inputs, targets_a, targets_b, lam = mixup_data(
-                    inputs, labels, alpha=0.4
+                inputs, targets_a, targets_b, lam = cutmix_data(
+                    inputs, labels, alpha=1.0
                 )
             else:
                 mix_fn = cutmix_data if use_cutmix else mixup_data
@@ -1541,6 +1552,7 @@ def train_stage(
     )
     print(f"{'═' * 60}")
 
+    csv_needs_header = True
     for epoch in range(num_epochs):
         t0 = time.time()
         progress = epoch / max(1, num_epochs - 1)
@@ -1683,7 +1695,8 @@ def train_stage(
                 }
             ]
         )
-        row.to_csv(log_path, mode="a", header=not log_path.exists(), index=False)
+        row.to_csv(log_path, mode="a", header=csv_needs_header, index=False)
+        csv_needs_header = False
 
         # Checkpoint + early stopping
         metric_values = {
@@ -2252,6 +2265,36 @@ def main():
         help="Cap expected sampler repeats for each class when sampler strategies are used.",
     )
     parser.add_argument(
+        "--focal-gamma",
+        type=float,
+        default=1.5,
+        help="Focal loss gamma for Stage 1 (higher = stronger focus on hard examples).",
+    )
+    parser.add_argument(
+        "--focal-gamma-s2",
+        type=float,
+        default=0.5,
+        help="Focal loss gamma for Stage 2 (gentler since model is already learned).",
+    )
+    parser.add_argument(
+        "--ens-beta",
+        type=float,
+        default=0.999,
+        help="ENS beta for effective number of samples (0.99-0.9999).",
+    )
+    parser.add_argument(
+        "--s1-label-smoothing",
+        type=float,
+        default=0.05,
+        help="Label smoothing for Stage 1.",
+    )
+    parser.add_argument(
+        "--s2-label-smoothing",
+        type=float,
+        default=0.02,
+        help="Label smoothing for Stage 2.",
+    )
+    parser.add_argument(
         "--selection-metric",
         default="val_macro_f1",
         choices=["val_macro_f1", "val_balanced_accuracy", "val_acc"],
@@ -2374,11 +2417,11 @@ def main():
     s2_epochs = 1 if args.dry_run else 60
     patience_s1 = 999 if args.dry_run else 10
     patience_s2 = 999 if args.dry_run else 12
-    ens_beta = 0.999
-    focal_gamma = 1.5
-    s2_focal_gamma = 0.5
-    s1_label_smoothing = 0.05
-    s2_label_smoothing = 0.02
+    ens_beta = args.ens_beta
+    focal_gamma = args.focal_gamma
+    s2_focal_gamma = args.focal_gamma_s2
+    s1_label_smoothing = args.s1_label_smoothing
+    s2_label_smoothing = args.s2_label_smoothing
     weight_decay = 0.01
     grad_clip = 1.0
     s1_mixup_prob = 0.4
@@ -2407,6 +2450,7 @@ def main():
     )
     print(f"  Loss S1:        strategy={args.imbalance_strategy}, focal_gamma={focal_gamma}, label_smoothing={s1_label_smoothing}")
     print(f"  Loss S2:        strategy={args.imbalance_strategy}, focal_gamma={s2_focal_gamma}, label_smoothing={s2_label_smoothing}")
+    print(f"  ENS beta:        {ens_beta}")
     sampler_enabled = args.imbalance_strategy.startswith("sampler")
     print(
         f"  Augmentation S1: sampler={sampler_enabled}, Mixup/CutMix @ {int(s1_mixup_prob * 100)}% -> {int(s1_final_mixup_prob * 100)}% of batches"
@@ -2557,6 +2601,9 @@ def main():
                             "s1_best_acc": best_acc_s1,
                             "s1_label_smoothing": s1_label_smoothing,
                             "s2_label_smoothing": s2_label_smoothing,
+                            "focal_gamma": focal_gamma,
+                            "focal_gamma_s2": s2_focal_gamma,
+                            "ens_beta": ens_beta,
                             "weight_decay": weight_decay,
                             "dataset_mean": dataset_mean,
                             "dataset_std": dataset_std,
@@ -2672,6 +2719,9 @@ def main():
                         "s1_lr": suggested_lr_s1,
                         "s1_label_smoothing": s1_label_smoothing,
                         "s2_label_smoothing": s2_label_smoothing,
+                        "focal_gamma": focal_gamma,
+                        "focal_gamma_s2": s2_focal_gamma,
+                        "ens_beta": ens_beta,
                         "weight_decay": weight_decay,
                         "dataset_mean": dataset_mean,
                         "dataset_std": dataset_std,

@@ -19,3 +19,4 @@
 /ConvNeXtTiny/
 .pytest_cache/
 .ruff_cache/
+keys.md
