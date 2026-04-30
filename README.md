@@ -1,126 +1,118 @@
 # Leafy
 
-Leafy is a plant pathology workspace for training large multi-class leaf disease classification models.
+Leafy is a plant pathology workspace for training multi-class plant disease classifiers on a clean, ready-to-use split dataset.
 
-## The Dataset
+## Dataset
 
-A curated collection of leaf images organized into **class folders** — each subdirectory represents one plant species paired with a disease or healthy condition.
-
-### Current state
+The primary dataset is `data_split/`. It is already organized for PyTorch `ImageFolder` training.
 
 | Metric | Value |
-|--------|-------|
-| Classes | 101 |
-| Total images | ~138,580 |
-| Train/Val/Test | 80/10/10 splits |
-| Sources | PlantVillage, Kaggle, and supplemental collections |
+|--------|------:|
+| Classes | 90 |
+| Total images | 137,186 |
+| Train images | 109,736 |
+| Validation images | 13,759 |
+| Test images | 13,691 |
+| Cross-split exact duplicate hash groups | 0 |
 
-### Plant species covered
+Class names follow `Species___condition`, for example `Tomato___early_blight` and `Potato___healthy`.
 
-Apple, Blueberry, Cassava, Cherry, Chili, Coffee, Corn, Cucumber, Grape, Guava, Jamun, Lemon, Mango, Orange, Peach, Pepper (bell), Pomegranate, Potato, Raspberry, Rice, Rose, Soybean, Squash, Strawberry, Sugarcane, Tea, Tomato, Watermelon, Wheat
+See [dataset_README.md](dataset_README.md) and [docs/DATASET.md](docs/DATASET.md) for the full class table, class descriptions, split counts, and Kaggle/GitHub dataset notes.
 
-### Diseases and conditions
+## Expected Structure
 
-Each class follows the naming convention `Species___condition` (e.g., `Tomato___early_blight`, `Potato___healthy`). Conditions include bacterial blights, fungal diseases (rust, powdery mildew, rot, blight), viral infections (mosaic virus, leaf curl), pest damage, and healthy controls.
-
-### Classes dropped during curation
-
-13 classes with insufficient images were permanently removed:
-
-`Coffee__cercospora_leaf_spot`, `Lemon__diseased`, `Pepper_bell__bacterial_spot`, `Pepper_bell__healthy`, `Potato___nematode`, `Soybean__bacterial_blight`, `Soybean__downy_mildew`, `Soybean__mosaic_virus`, `Soybean__powdery_mildew`, `Soybean__rust`, `Soybean__southern_blight`, `Sugarcane__red_stripe`, `Wheat__septoria`
-
-### Duplicate labels merged
-
-| Merged from | Merged into |
-|-------------|-------------|
-| `Bell_pepper___bacterial_spot` | `Pepper_bell___bacterial_spot` |
-| `Bell_pepper___healthy` | `Pepper_bell___healthy` |
-| `Tomato__yellow_leaf_curl_virus` | `Tomato___leaf_curl` |
-
-### Expected structure
-
-```
-data/                    # raw class-folder dataset (101 classes, ~138,580 images)
-├── Species___condition1/
-│   ├── image001.jpg
-│   └── image002.png
-└── Species___condition2/
-    └── image003.jpg
-
-data_split/              # output of prepare_dataset.py
-├── train/               # 80% of images
-│   ├── Species___condition1/
-│   └── Species___condition2/
-├── val/                 # 10% of images
-│   ├── Species___condition1/
-│   └── Species___condition2/
-└── test/                # 10% of images
-    ├── Species___condition1/
-    └── Species___condition2/
+```text
+data_split/
+├── train/
+│   └── Species___condition/
+├── val/
+│   └── Species___condition/
+├── test/
+│   └── Species___condition/
+├── split_summary.json
+└── dataset_fingerprint.json
 ```
 
-## Data Preparation
+## Setup
 
 ```bash
-# 1. Audit — see image counts per class and check for imbalance
-python data_preparation/dataset_audit.py --data-dir ./data
+pip install -r requirements.txt
 
-# 2. Clean — remove corrupted or unreadable images
-python data_preparation/clean_dataset.py --data-dir ./data --delete
-
-# 3. Split — create train/val/test splits
-python data_preparation/prepare_dataset.py \
-    --source-data-dir ./data \
-    --output-dir ./data_split \
-    --min-images-per-class 80 \
-    --overwrite
+# Optional: use the tested local package versions
+pip install -r requirements.lock.txt
 ```
 
-**Then train:**
+## Validate The Dataset
 
 ```bash
-python train_efficientnet.py --data-dir ./data_split
+python data_preparation/validate_split_dataset.py \
+    --data-dir ./data_split \
+    --write-summary
+
+python data_preparation/dataset_audit.py \
+    --data-dir ./data_split \
+    --top-k 25
+
+python data_preparation/clean_dataset.py \
+    --data-dir ./data_split
+
+python data_preparation/deduplicate_dataset.py \
+    --data-dir ./data_split \
+    --report-json ./reports/duplicate_report.json
 ```
 
-## Training
+## Train
+
+Default strong run:
 
 ```bash
-python train_efficientnet.py --data-dir ./data_split
+python train_efficientnet.py \
+    --data-dir ./data_split \
+    --architecture efficientnet_v2_s \
+    --selection-metric val_macro_f1 \
+    --imbalance-strategy ens_loss
 ```
 
 Supported architectures:
 
 | Architecture | Best for |
 |-------------|---------|
-| `efficientnet_v2_s` | Best overall accuracy and robustness |
-| `efficientnet_b0` | Lighter baseline for quick experiments |
-| `mobilenet_v3_large` | Fastest training and deployment |
-| `convnext_tiny` | Strong non-EfficientNet alternative |
+| `efficientnet_v2_s` | Primary accuracy baseline |
+| `efficientnet_b0` | Smaller EfficientNet experiment |
+| `mobilenet_v3_large` | Faster/mobile candidate |
+| `convnext_tiny` | Strong non-EfficientNet comparison |
+
+Useful imbalance experiments:
 
 ```bash
-python train_efficientnet.py --architecture efficientnet_v2_s --data-dir ./data_split
+python train_efficientnet.py --data-dir ./data_split --imbalance-strategy none
+python train_efficientnet.py --data-dir ./data_split --imbalance-strategy ens_loss
+python train_efficientnet.py --data-dir ./data_split --imbalance-strategy sampler
+python train_efficientnet.py --data-dir ./data_split --imbalance-strategy focal
+python train_efficientnet.py --data-dir ./data_split --imbalance-strategy sampler_focal
 ```
+
+Outputs are written to `model_outputs/<architecture>/` by default.
 
 ## Data Preparation Scripts
 
 | Script | Purpose |
 |--------|---------|
-| `dataset_audit.py` | Count images per class, show imbalance ratio, flag duplicate label groups |
-| `clean_dataset.py` | Validate images with PIL; use `--delete` to remove invalid files in-place |
-| `prepare_dataset.py` | Split class-folder dataset into `train/`, `val/`, `test/` subdirectories |
-
-See `data_preparation/README.md` for detailed arguments.
+| `validate_split_dataset.py` | Validates an existing `train/val/test` dataset and writes summary/fingerprint metadata |
+| `dataset_audit.py` | Counts images per class, reports imbalance, and flags duplicate label groups |
+| `clean_dataset.py` | Validates images with PIL; use `--delete` only when you want to remove invalid files |
+| `deduplicate_dataset.py` | Reports exact duplicate hashes and optional perceptual average hashes |
+| `prepare_dataset.py` | Optional utility for creating a split from a future unsplit class-folder dataset |
 
 ## Project Structure
 
-```
-├── data/                    # Raw class-folder dataset (101 classes)
-├── data_preparation/        # Audit, clean, and split scripts
-│   ├── dataset_audit.py
-│   ├── clean_dataset.py
-│   └── prepare_dataset.py
-├── configs/                 # Configuration files
-├── EfficientNetV2S/         # Saved models and training logs
-├── train_efficientnet.py    # Main training entrypoint
+```text
+├── data_split/               # Primary train/val/test dataset
+├── data_preparation/         # Dataset validation and utility scripts
+├── model_training/           # Maintained training implementation
+├── model_outputs/            # New training outputs
+├── EfficientNetV2S/          # Previous run artifacts
+├── train_efficientnet.py     # Compatibility wrapper
+├── dataset_README.md         # Dataset card for Kaggle/GitHub
 └── README.md
 ```

@@ -1,0 +1,17 @@
+Pillow==12.0.0
+tqdm==4.67.1
+matplotlib==3.10.6
+numpy==2.3.5
+pandas==2.3.3
+seaborn==0.13.2
+torch==2.11.0
+torchvision==0.26.0
+scikit-learn==1.7.2
+scipy==1.16.3
+wandb==0.26.1
+torchsummary
+tensorboard==2.20.0
+torch-lr-finder
+onnx==1.21.0
+onnxscript==0.7.0
+pytest==8.4.2

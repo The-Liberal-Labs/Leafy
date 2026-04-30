@@ -1,11 +1,14 @@
 # Ignore data folders
 /data/
+/data_split/
 /new_data/
 /runs/
 /wandb/
 /checkpoints/
 /logs/
 /models/
+/model_outputs/
+/reports/
 /.vscode/
 /EfficientNetV2S/
 /EfficientNetV2S-run1/
@@ -14,6 +17,5 @@
 /EfficientNetB0/
 /MobileNetV3Large/
 /ConvNeXtTiny/
-/data_curated/
-/new_data_curated/
-/reports/
+.pytest_cache/
+.ruff_cache/

@@ -15,7 +15,9 @@ VALID_FORMATS = {"jpeg", "png", "bmp", "webp"}
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Validate and clean image datasets")
-    parser.add_argument("--data-dir", default="./data", help="Dataset root directory")
+    parser.add_argument(
+        "--data-dir", default="./data_split", help="Dataset root directory"
+    )
     parser.add_argument(
         "--workers", type=int, default=None, help="Override worker count"
     )

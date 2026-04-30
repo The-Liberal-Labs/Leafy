@@ -7,9 +7,11 @@ seaborn
 torch
 torchvision
 scikit-learn
+scipy
 wandb
 torchsummary
 tensorboard
 torch-lr-finder
 onnx
 onnxscript
+pytest

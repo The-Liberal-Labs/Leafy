@@ -1,31 +1,34 @@
 # Data Preparation
 
-Tools for auditing, cleaning, curating, and splitting the Leafy dataset.
+The active Leafy dataset is `data_split/`. It already contains `train/`, `val/`,
+and `test/` folders, so normal work should validate that split rather than
+rebuild it.
 
-## Workflow
+## Primary Workflow
 
 ```bash
-# 1. Audit — get a class-by-class image count overview
-python data_preparation/dataset_audit.py --data-dir ./data
+# 1. Validate the existing split and refresh metadata
+python data_preparation/validate_split_dataset.py \
+    --data-dir ./data_split \
+    --write-summary
 
-# 2. Clean — remove corrupted/unreadable images
-python data_preparation/clean_dataset.py --data-dir ./data --delete
+# 2. Audit class counts and imbalance
+python data_preparation/dataset_audit.py \
+    --data-dir ./data_split \
+    --top-k 25 \
+    --report-json ./reports/audit_data_split.json
 
-# 3. Curate — merge duplicate labels and drop weak classes (produces ./data_curated)
-python data_preparation/curate_dataset.py \
-    --source-data-dir ./data \
-    --output-dir ./data_curated \
-    --overwrite
+# 3. Check that images are readable. This is dry-run by default.
+python data_preparation/clean_dataset.py \
+    --data-dir ./data_split
 
-# 4. Split — create train/val/test splits (80/10/10 by default)
-python data_preparation/prepare_dataset.py \
-    --source-data-dir ./data_curated \
-    --output-dir ./data_split \
-    --min-images-per-class 80 \
-    --overwrite
+# 4. Optional duplicate report
+python data_preparation/deduplicate_dataset.py \
+    --data-dir ./data_split \
+    --report-json ./reports/duplicate_report.json
 ```
 
-**Then train with:**
+Train after validation:
 
 ```bash
 python train_efficientnet.py --data-dir ./data_split
@@ -35,56 +38,60 @@ python train_efficientnet.py --data-dir ./data_split
 
 | Script | What it does |
 |--------|-------------|
-| `dataset_audit.py` | Counts images per class, shows imbalance ratio, identifies likely duplicate label groups |
-| `clean_dataset.py` | Validates every image with PIL; use `--delete` to remove corrupted files in-place |
-| `curate_dataset.py` | Merges duplicate class labels and drops weak classes per `configs/dataset_curation/default_leafy_curation.json` |
-| `prepare_dataset.py` | Splits a class-folder dataset into `train/`, `val/`, `test/` subdirectories |
+| `validate_split_dataset.py` | Validates train/val/test class consistency, empty classes, split totals, and cross-split exact duplicate hashes |
+| `dataset_audit.py` | Counts images per class from either a split dataset or a single class-folder dataset |
+| `clean_dataset.py` | Validates every image with PIL; add `--delete` only if you want invalid files removed |
+| `deduplicate_dataset.py` | Reports exact duplicate hashes; add `--include-perceptual` for average-hash grouping |
+| `prepare_dataset.py` | Optional helper for creating `data_split/` from a future unsplit class-folder dataset |
 
-## Arguments
+## Commands
+
+### validate_split_dataset.py
+
+```text
+--data-dir        Split dataset root (default: ./data_split)
+--write-summary  Write split_summary.json, dataset_fingerprint.json, and class_names.json
+```
 
 ### dataset_audit.py
-```
---data-dir         Directory with one subdirectory per class  (default: ./data)
---top-k           How many highest/lowest classes to print  (default: 15)
---report-json     Optional path to save the audit report as JSON
+
+```text
+--data-dir      Dataset root (default: ./data_split)
+--top-k         Number of highest/lowest classes to print (default: 15)
+--report-json   Optional path to save the audit report
 ```
 
 ### clean_dataset.py
-```
---data-dir    Dataset root directory                     (default: ./data)
---workers     Override parallel worker count             (default: None = auto)
---delete      Actually delete invalid files            (default: dry-run only)
+
+```text
+--data-dir   Dataset root (default: ./data_split)
+--workers    Override parallel worker count
+--delete     Delete invalid files instead of dry-run
 ```
 
-### curate_dataset.py
-```
---source-data-dir    Folder with one subdirectory per class   (default: ./data)
---output-dir        Curated output directory                (default: ./data_curated)
---config           JSON file with merge/drop rules         (default: ./configs/dataset_curation/default_leafy_curation.json)
---overwrite        Remove output directory before writing
---dry-run          Print the plan without copying files
-```
+### deduplicate_dataset.py
 
-The curation config (`configs/dataset_curation/default_leafy_curation.json`) defines:
-- **`merge_into`**: source class → target class mappings (duplicates that should be merged)
-- **`drop_classes`**: class names to permanently remove
+```text
+--data-dir              Dataset root (default: ./data_split)
+--report-json           Output report path
+--include-perceptual    Also compute average perceptual hashes
+```
 
 ### prepare_dataset.py
-```
---source-data-dir       Folder with one subdirectory per class   (default: ./data)
---output-dir            Destination for split dataset           (default: ./data_split)
---train-ratio           Training split ratio                    (default: 0.80)
---val-ratio             Validation split ratio                  (default: 0.10)
---seed                  Random seed for splitting                (default: 42)
---min-images-per-class  Skip classes below this threshold        (default: 80)
+
+Use this only if you later receive a new unsplit class-folder dataset.
+
+```text
+--source-data-dir       Folder with one subdirectory per class (default: ./class_folder_data)
+--output-dir            Destination split dataset (default: ./data_split)
+--train-ratio           Training split ratio (default: 0.80)
+--val-ratio             Validation split ratio (default: 0.10)
+--seed                  Random seed (default: 42)
+--min-images-per-class  Skip classes below this count (default: 80)
 --overwrite             Remove output directory before writing
---report-json           Optional path to save split summary as JSON
+--report-json           Optional extra path to save split summary
+--no-hash-groups        Disable exact duplicate SHA-256 grouping
 ```
 
-## Dropping additional classes
-
-After auditing, if you see classes with very few images, you can permanently delete them from the raw data before splitting:
-
-```bash
-rm -rf ./data/ClassNameToDelete
-```
+`prepare_dataset.py` writes `split_summary.json` and `dataset_fingerprint.json`.
+The validator can refresh those files and add `class_names.json` afterward.
