@@ -331,8 +331,8 @@ def get_hardware_profile(device, requested_profile="auto", colab=False):
         },
         "generic_16gb": {
             "name": "generic_16gb",
-            "s1_batch": 224,
-            "s2_batch": 40,
+            "s1_batch": 256,
+            "s2_batch": 48,
             "accum_steps_s1": 1,
             "accum_steps_s2": 2,
             "s1_img_size": 224,
@@ -942,8 +942,61 @@ class FocalLoss(nn.Module):
         return focal_loss
 
 
-def build_criterion(strategy, class_weights, focal_gamma, label_smoothing):
-    """Build loss function from an explicit imbalance strategy."""
+class PerClassSmoothCE(nn.Module):
+    """
+    Cross-entropy with per-CLASS label smoothing.
+    Smoothing eps_t depends on the TARGET class (so noisy classes can have higher eps).
+    Optional class weights (e.g. ENS) are applied per-sample by target class.
+
+    Matches PyTorch's smoothing convention:
+        smoothed_t[t] = 1 - eps + eps/K, smoothed_t[c!=t] = eps/K
+        loss = (1 - eps) * NLL + eps * (-mean log_softmax)
+    """
+
+    def __init__(self, weight=None, smoothing_per_class=None, default_smoothing=0.0):
+        super().__init__()
+        if weight is not None:
+            self.register_buffer("weight", weight)
+        else:
+            self.weight = None
+        if smoothing_per_class is not None:
+            self.register_buffer("smoothing", smoothing_per_class)
+        else:
+            self.smoothing = None
+        self.default_smoothing = float(default_smoothing)
+
+    def forward(self, logits, targets):
+        log_probs = torch.log_softmax(logits, dim=-1)
+        nll = -log_probs.gather(1, targets.unsqueeze(1)).squeeze(1)
+        smooth_loss = -log_probs.mean(dim=-1)
+
+        if self.smoothing is not None:
+            eps = self.smoothing[targets]
+        else:
+            eps = torch.full(
+                (targets.size(0),), self.default_smoothing,
+                device=logits.device, dtype=logits.dtype,
+            )
+        loss = (1.0 - eps) * nll + eps * smooth_loss
+
+        if self.weight is not None:
+            w = self.weight[targets]
+            return (loss * w).sum() / w.sum().clamp(min=1e-8)
+        return loss.mean()
+
+
+def build_criterion(
+    strategy,
+    class_weights,
+    focal_gamma,
+    label_smoothing,
+    smoothing_per_class=None,
+):
+    """Build loss function from an explicit imbalance strategy.
+
+    If `smoothing_per_class` is provided (tensor of shape [num_classes]), it is
+    used INSTEAD OF the scalar `label_smoothing` for the CE branch.
+    """
     use_ens_weights = strategy in {"ens_loss", "sampler_ens", "sampler_ens_focal"}
     use_focal = strategy in {"focal", "sampler_focal", "sampler_ens_focal"}
     weights = class_weights if use_ens_weights else None
@@ -954,6 +1007,12 @@ def build_criterion(strategy, class_weights, focal_gamma, label_smoothing):
             gamma=focal_gamma,
             label_smoothing=label_smoothing,
         )
+    if smoothing_per_class is not None:
+        return PerClassSmoothCE(
+            weight=weights,
+            smoothing_per_class=smoothing_per_class,
+            default_smoothing=label_smoothing,
+        )
     return nn.CrossEntropyLoss(weight=weights, label_smoothing=label_smoothing)
 
 
@@ -962,27 +1021,45 @@ def build_criterion(strategy, class_weights, focal_gamma, label_smoothing):
 # ======================================================================
 
 
-def mixup_data(x, y, alpha=0.4):
-    """Mixup: blend two random samples."""
+def _resolve_pair_index(y, batch_size, skip_pair_mask=None):
+    """Random pairing index, but for samples whose target class is in
+    `skip_pair_mask`, force the partner to be the same sample (effectively no mix)
+    if their would-be partner's class is ALSO in the mask. Prevents mixing two
+    noisy-label samples (e.g. Cassava-Cassava blends)."""
+    index = torch.randperm(batch_size, device=y.device)
+    if skip_pair_mask is not None:
+        is_noisy = skip_pair_mask[y]  # (B,)
+        partner_noisy = is_noisy[index]  # (B,)
+        bad = is_noisy & partner_noisy
+        if bad.any():
+            self_idx = torch.arange(batch_size, device=y.device)
+            index = torch.where(bad, self_idx, index)
+    return index
+
+
+def mixup_data(x, y, alpha=0.4, skip_pair_mask=None):
+    """Mixup: blend two random samples. Optional `skip_pair_mask` (bool tensor of
+    shape [num_classes]) prevents pairs where both samples are in the mask."""
     if alpha > 0:
         lam = np.random.beta(alpha, alpha)
     else:
         lam = 1.0
     batch_size = x.size(0)
-    index = torch.randperm(batch_size, device=x.device)
+    index = _resolve_pair_index(y, batch_size, skip_pair_mask)
     mixed_x = lam * x + (1 - lam) * x[index]
     y_a, y_b = y, y[index]
     return mixed_x, y_a, y_b, lam
 
 
-def cutmix_data(x, y, alpha=1.0):
-    """CutMix: cut a patch from one image and paste to another."""
+def cutmix_data(x, y, alpha=1.0, skip_pair_mask=None):
+    """CutMix: cut a patch from one image and paste to another. Optional
+    `skip_pair_mask` prevents pairs where both samples are in the mask."""
     if alpha > 0:
         lam = np.random.beta(alpha, alpha)
     else:
         lam = 1.0
     batch_size = x.size(0)
-    index = torch.randperm(batch_size, device=x.device)
+    index = _resolve_pair_index(y, batch_size, skip_pair_mask)
 
     _, _, H, W = x.shape
     cut_ratio = np.sqrt(1 - lam)
@@ -1331,6 +1408,7 @@ def train_one_epoch(
     mixup_prob=0.5,
     use_cutmix=True,
     step_scheduler_per_batch=True,
+    mix_skip_pair_mask=None,
 ):
     """
     Train for one epoch with:
@@ -1355,12 +1433,16 @@ def train_one_epoch(
         if apply_mix:
             if use_cutmix and random.random() < 0.5:
                 inputs, targets_a, targets_b, lam = cutmix_data(
-                    inputs, labels, alpha=1.0
+                    inputs, labels, alpha=1.0,
+                    skip_pair_mask=mix_skip_pair_mask,
                 )
             else:
                 mix_fn = cutmix_data if use_cutmix else mixup_data
                 alpha = 1.0 if use_cutmix else 0.2
-                inputs, targets_a, targets_b, lam = mix_fn(inputs, labels, alpha=alpha)
+                inputs, targets_a, targets_b, lam = mix_fn(
+                    inputs, labels, alpha=alpha,
+                    skip_pair_mask=mix_skip_pair_mask,
+                )
 
         with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
             outputs = model(inputs)
@@ -1496,6 +1578,7 @@ def train_stage(
     selection_metric="val_macro_f1",
     val_report_every=5,
     class_names=None,
+    mix_skip_pair_mask=None,
 ):
     """
     Full training loop for one stage (feature extraction OR fine-tuning).
@@ -1572,6 +1655,7 @@ def train_stage(
             mixup_prob=current_mixup_prob,
             use_cutmix=use_cutmix,
             step_scheduler_per_batch=step_scheduler_per_batch,
+            mix_skip_pair_mask=mix_skip_pair_mask,
         )
         train_clean_loss, train_clean_acc = (None, None)
         if train_eval_loader is not None:
@@ -2132,18 +2216,29 @@ def save_error_review_exports(samples, labels, preds, probs, class_names, dirs):
     reports_dir.mkdir(parents=True, exist_ok=True)
     exports = {
         dirs["logs"] / "error_review_top_mistakes.csv": mistakes.head(500),
-        reports_dir / "cassava_error_review.csv": mistakes[
-            mistakes["true_label"].str.startswith("Cassava___")
-            | mistakes["predicted_label"].str.startswith("Cassava___")
-        ],
-        reports_dir / "pepper_error_review.csv": mistakes[
-            mistakes["true_label"].str.startswith("Pepper_bell___")
-            | mistakes["predicted_label"].str.startswith("Pepper_bell___")
-        ],
         reports_dir / "low_support_error_review.csv": mistakes[
             mistakes["true_class_support"] < 30
         ],
     }
+    # Auto-emit one CSV per plant prefix that has >=2 classes (where intra-plant
+    # confusion is possible). Class naming convention: "Plant___condition".
+    prefix_class_count = {}
+    for cn in class_names:
+        if "___" in cn:
+            prefix_class_count[cn.split("___", 1)[0]] = (
+                prefix_class_count.get(cn.split("___", 1)[0], 0) + 1
+            )
+    for prefix, count in prefix_class_count.items():
+        if count < 2:
+            continue
+        prefix_with_sep = f"{prefix}___"
+        slug = prefix.lower().replace(" ", "_")
+        subset = mistakes[
+            mistakes["true_label"].str.startswith(prefix_with_sep)
+            | mistakes["predicted_label"].str.startswith(prefix_with_sep)
+        ]
+        if not subset.empty:
+            exports[reports_dir / f"{slug}_error_review.csv"] = subset
     for path, frame in exports.items():
         frame.to_csv(path, index=False)
         print(f"  Error review saved: {path} ({len(frame)} rows)")
@@ -2189,25 +2284,49 @@ def export_model(
     print(f"  💾 PTH saved: {pth_path}")
     exported_paths = {"pth": str(pth_path)}
 
-    # ONNX
+    # ONNX — try legacy TorchScript exporter first (more stable for dynamic axes),
+    # fall back to the new TorchDynamo exporter at opset 18 (its native version).
     onnx_path = dirs["models"] / "model.onnx"
     dummy = torch.randn(1, 3, image_size, image_size).to(device)
-    try:
-        import onnxscript  # noqa: F401
+    raw_eval = raw.eval()
 
+    def _export_legacy():
         torch.onnx.export(
-            raw,
-            dummy,
-            str(onnx_path),
+            raw_eval, dummy, str(onnx_path),
             opset_version=17,
-            input_names=["input"],
-            output_names=["output"],
+            input_names=["input"], output_names=["output"],
             dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}},
+            dynamo=False,
         )
+
+    def _export_dynamo():
+        # New exporter natively emits opset 18; supplying lower triggers a C API
+        # downconvert that is buggy for some ops (axes_input_to_attribute).
+        from torch.export import Dim
+        batch = Dim("batch", min=1, max=4096)
+        torch.onnx.export(
+            raw_eval, (dummy,), str(onnx_path),
+            opset_version=18,
+            input_names=["input"], output_names=["output"],
+            dynamic_shapes={"input": {0: batch}},
+            dynamo=True,
+        )
+
+    try:
+        try:
+            _export_legacy()
+        except TypeError:
+            # Older torch versions don't accept the `dynamo` kwarg — falls through
+            # naturally; if that path also fails, try the dynamo route.
+            _export_dynamo()
+        except Exception as e_legacy:
+            print(f"  ℹ️  Legacy ONNX exporter failed ({e_legacy.__class__.__name__}: "
+                  f"{e_legacy}); trying TorchDynamo exporter at opset 18…")
+            _export_dynamo()
         print(f"  💾 ONNX saved: {onnx_path}")
         exported_paths["onnx"] = str(onnx_path)
-    except ImportError:
-        print("  ⚠️  ONNX export skipped: install onnx and onnxscript to enable export")
+    except ImportError as e:
+        print(f"  ⚠️  ONNX export skipped (missing dependency): {e}")
     except Exception as e:
         print(f"  ⚠️  ONNX export failed: {e}")
 
@@ -2291,8 +2410,75 @@ def main():
     parser.add_argument(
         "--s2-label-smoothing",
         type=float,
-        default=0.02,
-        help="Label smoothing for Stage 2.",
+        default=0.0,
+        help="Label smoothing for Stage 2 (default 0.0 — sharper signal at convergence).",
+    )
+    parser.add_argument(
+        "--noisy-class-smoothing",
+        type=float,
+        default=0.10,
+        help="Per-class label smoothing applied ONLY to detected/declared noisy "
+        "classes. Set to 0 to disable. Other classes use --s2-label-smoothing.",
+    )
+    parser.add_argument(
+        "--noisy-class-prefixes",
+        nargs="+",
+        default=[],
+        help="Class-name prefixes whose classes should be treated as noisy "
+        '(e.g. "Cassava___"). Combined with --auto-detect-noisy and '
+        "--noisy-class-names.",
+    )
+    parser.add_argument(
+        "--noisy-class-names",
+        nargs="+",
+        default=[],
+        help="Exact class names to mark as noisy.",
+    )
+    parser.add_argument(
+        "--auto-detect-noisy",
+        action="store_true",
+        default=True,
+        help="Auto-detect noisy classes after Stage 1: any class with val "
+        "macro-F1 below --noisy-f1-threshold and support >= --noisy-min-support "
+        "is treated as noisy in Stage 2. Default ON.",
+    )
+    parser.add_argument(
+        "--no-auto-detect-noisy",
+        dest="auto_detect_noisy",
+        action="store_false",
+        help="Disable auto-detection of noisy classes.",
+    )
+    parser.add_argument(
+        "--noisy-f1-threshold",
+        type=float,
+        default=0.85,
+        help="F1 below this on Stage 1 val marks a class as noisy "
+        "(only when --auto-detect-noisy is ON).",
+    )
+    parser.add_argument(
+        "--noisy-min-support",
+        type=int,
+        default=30,
+        help="Min val support for a class to be eligible for auto-noisy detection "
+        "(prevents tiny-class noise from triggering false positives).",
+    )
+    parser.add_argument(
+        "--no-noisy-mixup-gate",
+        action="store_true",
+        help="Disable noisy-class-aware MixUp/CutMix gating (default ON: skips "
+        "mixing two samples that are both in the noisy set).",
+    )
+    parser.add_argument(
+        "--tta-views-test",
+        type=int,
+        default=9,
+        help="Number of augmented TTA views at TEST time (1 deterministic + N augmented).",
+    )
+    parser.add_argument(
+        "--tta-views-val",
+        type=int,
+        default=5,
+        help="Number of augmented TTA views at VAL selection time.",
     )
     parser.add_argument(
         "--selection-metric",
@@ -2430,6 +2616,55 @@ def main():
     s2_final_mixup_prob = 0.0
     train_eval_max_samples = 4096 if args.dry_run else 6144
 
+    # ── Noisy-class handling (auto-detected, no hardcoded class list) ──
+    # A class is "noisy" if any of:
+    #   (a) its name matches an explicit --noisy-class-prefixes / --noisy-class-names
+    #   (b) its Stage 1 val macro-F1 falls below --noisy-f1-threshold AND its
+    #       val support >= --noisy-min-support  (only after Stage 1, --auto-detect-noisy).
+    # On noisy classes we apply (1) higher label smoothing and (2) skip
+    # MixUp/CutMix pairs where BOTH samples are in the noisy set.
+    def resolve_explicit_noisy_idx():
+        idx = set()
+        name_to_idx = {n: i for i, n in enumerate(class_names)}
+        for p in args.noisy_class_prefixes:
+            idx.update(i for i, n in enumerate(class_names) if n.startswith(p))
+        for n in args.noisy_class_names:
+            if n in name_to_idx:
+                idx.add(name_to_idx[n])
+            else:
+                print(f"  ⚠️  --noisy-class-names '{n}' not found in dataset; ignored.")
+        return sorted(idx)
+
+    def build_noisy_artifacts(noisy_idx, s_smoothing_scalar):
+        """Build (mask, smoothing_tensor) for the given noisy class indices."""
+        mask = torch.zeros(num_classes, dtype=torch.bool, device=device)
+        smoothing_tensor = None
+        if noisy_idx:
+            mask[torch.tensor(noisy_idx, device=device)] = True
+            if args.noisy_class_smoothing > 0:
+                smoothing_tensor = torch.full(
+                    (num_classes,), float(s_smoothing_scalar),
+                    dtype=torch.float32, device=device,
+                )
+                smoothing_tensor[torch.tensor(noisy_idx, device=device)] = float(
+                    args.noisy_class_smoothing
+                )
+        return mask, smoothing_tensor
+
+    explicit_noisy_idx = resolve_explicit_noisy_idx()
+    # Stage 1 only knows about explicit noisy classes — nothing to auto-detect yet.
+    s1_noisy_mask, s1_smoothing_per_class = build_noisy_artifacts(
+        explicit_noisy_idx, s1_label_smoothing
+    )
+    # Stage 2 noisy set is finalized after Stage 1 (see auto-detection block below).
+    s2_noisy_idx = list(explicit_noisy_idx)
+    s2_noisy_mask, s2_smoothing_per_class = build_noisy_artifacts(
+        s2_noisy_idx, s2_label_smoothing
+    )
+    s1_mix_skip_pair_mask = (
+        None if args.no_noisy_mixup_gate else (s1_noisy_mask if explicit_noisy_idx else None)
+    )
+
     print(f"\n  ⚙️  CONFIG (auto-configured)")
     print(f"  {'─' * 40}")
     print(f"  Architecture:  {architecture_spec['label']}")
@@ -2460,6 +2695,18 @@ def main():
     )
     print(f"  Imbalance strategy: {args.imbalance_strategy}")
     print(f"  Selection metric:   {args.selection_metric}")
+    print(
+        f"  Noisy-class config: smoothing={args.noisy_class_smoothing}, "
+        f"mix_gate={'OFF' if args.no_noisy_mixup_gate else 'ON'}, "
+        f"auto_detect={'ON' if args.auto_detect_noisy else 'OFF'} "
+        f"(F1<{args.noisy_f1_threshold}, support>={args.noisy_min_support})"
+    )
+    if explicit_noisy_idx:
+        explicit_names = [class_names[i] for i in explicit_noisy_idx]
+        print(f"  Explicit noisy classes ({len(explicit_names)}): "
+              f"{', '.join(explicit_names[:8])}"
+              f"{' ...' if len(explicit_names) > 8 else ''}")
+    print(f"  TTA views (val/test): {args.tta_views_val}/{args.tta_views_test}")
     print(f"  Weight decay:   {weight_decay} (excluded on BN/bias)")
     print(f"  Grad clip:      {grad_clip}")
     print(f"  Patience:       Stage 1 = {patience_s1}, Stage 2 = {patience_s2}")
@@ -2670,12 +2917,15 @@ def main():
         model = build_model(args.architecture, num_classes, device)
         model = try_compile(model)
 
-        # Loss — Focal Loss (better than CE for imbalanced data)
+        # Loss — Focal Loss (better than CE for imbalanced data) + per-class
+        # smoothing for any explicitly-declared noisy classes (Stage 1 only;
+        # auto-detected noisy classes kick in for Stage 2 after this stage).
         criterion = build_criterion(
             args.imbalance_strategy,
             class_weights,
             focal_gamma,
             s1_label_smoothing,
+            smoothing_per_class=s1_smoothing_per_class,
         )
 
         # ── LR Finder for Stage 1 ──
@@ -2756,8 +3006,41 @@ def main():
             selection_metric=args.selection_metric,
             val_report_every=args.val_report_every,
             class_names=class_names,
+            mix_skip_pair_mask=s1_mix_skip_pair_mask,
         )
         print(f"\n  ✅ Stage 1 done — Best Val Acc: {best_acc_s1:.4f}")
+
+        # Auto-detect noisy classes from Stage 1 val per-class F1.
+        if args.auto_detect_noisy:
+            s1_val_metrics = validate_with_metrics(
+                model, dataloaders["val"], criterion, device
+            )
+            _, _, f1_per_class, support_per_class = precision_recall_fscore_support(
+                s1_val_metrics["labels"],
+                s1_val_metrics["preds"],
+                labels=range(num_classes),
+                zero_division=0,
+            )
+            auto_idx = [
+                i for i in range(num_classes)
+                if f1_per_class[i] < args.noisy_f1_threshold
+                and support_per_class[i] >= args.noisy_min_support
+            ]
+            new_idx = sorted(set(auto_idx) - set(explicit_noisy_idx))
+            if new_idx:
+                preview = ", ".join(
+                    f"{class_names[i]} (F1={f1_per_class[i]:.2f}, n={support_per_class[i]})"
+                    for i in new_idx[:8]
+                )
+                print(f"  🔎 Auto-detected {len(new_idx)} noisy class(es) "
+                      f"from Stage 1 val: {preview}"
+                      f"{' ...' if len(new_idx) > 8 else ''}")
+            else:
+                print("  🔎 Auto-detection found no new noisy classes from Stage 1.")
+            s2_noisy_idx = sorted(set(s2_noisy_idx) | set(auto_idx))
+            s2_noisy_mask, s2_smoothing_per_class = build_noisy_artifacts(
+                s2_noisy_idx, s2_label_smoothing
+            )
 
         # Clean up Stage 1 resources before Stage 2
         del dataloaders, optimizer, scheduler
@@ -2770,6 +3053,44 @@ def main():
     print("\n" + "═" * 60)
     print("  🔓 STAGE 2: Fine-Tuning (all layers unfrozen)")
     print("═" * 60)
+
+    # If we resumed from a Stage 1 checkpoint, run auto-detect here using a
+    # temporary val loader (Stage 2 dataloaders not built yet).
+    if args.resume and args.auto_detect_noisy:
+        tmp_val_dataset = datasets.ImageFolder(
+            os.path.join(args.data_dir, "val"),
+            get_eval_transforms(s1_img_size, dataset_mean, dataset_std),
+        )
+        tmp_val_loader = DataLoader(
+            tmp_val_dataset, batch_size=s1_batch, shuffle=False,
+            num_workers=num_workers, pin_memory=True,
+        )
+        tmp_metrics = validate_with_metrics(
+            model, tmp_val_loader, nn.CrossEntropyLoss(), device
+        )
+        _, _, f1_per_class, support_per_class = precision_recall_fscore_support(
+            tmp_metrics["labels"], tmp_metrics["preds"],
+            labels=range(num_classes), zero_division=0,
+        )
+        auto_idx = [
+            i for i in range(num_classes)
+            if f1_per_class[i] < args.noisy_f1_threshold
+            and support_per_class[i] >= args.noisy_min_support
+        ]
+        new_idx = sorted(set(auto_idx) - set(explicit_noisy_idx))
+        if new_idx:
+            preview = ", ".join(
+                f"{class_names[i]} (F1={f1_per_class[i]:.2f}, n={support_per_class[i]})"
+                for i in new_idx[:8]
+            )
+            print(f"  🔎 Auto-detected {len(new_idx)} noisy class(es) "
+                  f"from resumed Stage 1 val: {preview}"
+                  f"{' ...' if len(new_idx) > 8 else ''}")
+        s2_noisy_idx = sorted(set(s2_noisy_idx) | set(auto_idx))
+        s2_noisy_mask, s2_smoothing_per_class = build_noisy_artifacts(
+            s2_noisy_idx, s2_label_smoothing
+        )
+        del tmp_val_loader, tmp_val_dataset
 
     # Clean up before Stage 2 dataloaders
     torch.cuda.empty_cache()
@@ -2829,11 +3150,16 @@ def main():
     class_weights = compute_ens_class_weights(
         train_dataset, ens_beta, num_classes, device
     )
+    if s2_noisy_idx:
+        print(f"  🛡️  Stage 2 noisy-class set ({len(s2_noisy_idx)}): "
+              f"smoothing={args.noisy_class_smoothing}, "
+              f"mix_gate={'OFF' if args.no_noisy_mixup_gate else 'ON'}")
     criterion = build_criterion(
         args.imbalance_strategy,
         class_weights,
         s2_focal_gamma,
         s2_label_smoothing,
+        smoothing_per_class=s2_smoothing_per_class,
     )
 
     # ── LR Finder for Stage 2 (discriminative LR) ──
@@ -2908,6 +3234,10 @@ def main():
         selection_metric=args.selection_metric,
         val_report_every=args.val_report_every,
         class_names=class_names,
+        mix_skip_pair_mask=(
+            None if args.no_noisy_mixup_gate
+            else (s2_noisy_mask if s2_noisy_idx else None)
+        ),
     )
     print(f"\n  ✅ Stage 2 done — Best Val Acc: {best_acc_s2:.4f}")
 
@@ -2944,7 +3274,7 @@ def main():
         s2_batch,
         num_workers,
         device,
-        n_augments=5,
+        n_augments=args.tta_views_val,
     )
     metric_functions = {
         "val_acc": lambda y, p: float((p == y).mean()),
@@ -2993,7 +3323,7 @@ def main():
             s2_batch,
             num_workers,
             device,
-            n_augments=5,
+            n_augments=args.tta_views_test,
             return_probs=True,
         )
         print("  Using TTA predictions because validation selected TTA")
